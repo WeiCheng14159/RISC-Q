@@ -53,6 +53,20 @@ python3 -m venv ~/.venvs/riscq
 Check: `cd software && PYTHONPATH=. ~/.venvs/riscq/bin/python -m pytest tests/ -q` →
 378 passed, 106 skipped.
 
+**Running the co-sim notebooks** needs two things beyond `PATH`:
+
+```bash
+. ~/.venvs/riscq/bin/activate                  # cocotb picks the simulator's embedded Python from $VIRTUAL_ENV
+export PYTHONPATH=$PWD/software                # the embedded interpreter does not see the editable install
+jupyter nbconvert --to notebook --execute --ExecutePreprocessor.kernel_name=riscq \
+  --output-dir build/examples examples/amplitude_sweep.ipynb
+```
+
+Without `VIRTUAL_ENV` the Verilated simulator falls back to the system Python; without
+`PYTHONPATH` it fails with `Failed to import module riscq.sim.bench: No module named 'riscq'`.
+Both show up only in the co-sim log tail, as `cosim process died`. The first run Verilates the
+SoC (a couple of minutes), cached under `software/build/sim-2q/`.
+
 ## 3. Build the XSA with Vivado 2023.1
 
 ```bash

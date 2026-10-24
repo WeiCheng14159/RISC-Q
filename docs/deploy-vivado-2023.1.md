@@ -94,6 +94,20 @@ small margin.
 
 ## 4. Deploy to a ZCU216
 
+### PYNQ 2.7 boards (e.g. zcu216-0)
+
+zcu216-0 runs the PYNQ 2.7 image (Python 3.8.2, 128 MB CMA). Four things differ from what the
+software was written against:
+
+| Issue | What to do |
+|---|---|
+| **CMA is 128 MB.** The default 14-qubit build needs 14 × 16 MB = 224 MB for the host window, and `hostwin_bits` is baked into the RTL. | Build `software/configs/zcu216-14q-hw23.json` (`hostwin_bits: 23`, 8 MB per core = 112 MB): `RISCQ_CONFIG=software/configs/zcu216-14q-hw23.json RISCQ_PROJ_NAME=zcu216-14q-hw23 ...build-riscvsoc-bd.sh` |
+| **PYNQ 2.7 cannot load an `.xsa`**; `pynq.Overlay` wants a `.bit` with a same-named `.hwh`. | `PynqDriver` now falls back to `top.bit` + `top.hwh` beside `top.xsa` on PYNQ < 3. Put all three (and `params.json`) in the bundle directory. |
+| **Python 3.8**, while `pyproject.toml` says `>=3.10`. Every board-side module (`riscq`, `map`, `spec`, `build`, `run`, `driver`, `driver.remote`, `board`, `board.server`, `board.pynq_driver`) imports fine on 3.8. | Run from source instead of installing the wheel: `PYTHONPATH=<repo>/software:pyro5-*.whl:serpent-*.whl`, in a login shell (`bash -l`) so PYNQ's profile sets `BOARD=ZCU216`, which `xrfclk` needs at import. |
+| **No 500.25 MHz LMK04828 register file.** The stock `xrfclk` has only LMK04828 245.76 MHz (plus LMK04832/LMK04208 122.88 MHz and a few LMX2594 files); `PynqDriver` calls `xrfclk.set_ref_clks(lmk_freq=500.25)`, inherited from qcal-riscq. | **Unresolved.** The matching TICS file has to come from qcal-riscq/QubiC (installed into the board's `xrfclk` directory), or the RFDC clock plan in `rfdc-config.tcl` (DAC 8 GS/s, no tile PLL; ADC 2 GS/s from the ADC tile-2 PLL at a 500 MHz reference) has to be reworked against a clock file the board has. |
+
+### Generic flow
+
 Unchanged from [software/README.md](../software/README.md#board-install-offline): build offline
 wheels, `scp` them to the board, `pip install --no-index` there, check `CmaFree` exceeds
 `cores × 16 MB`, start `riscq-board-server --port 9091`, then from the host

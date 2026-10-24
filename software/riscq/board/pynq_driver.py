@@ -61,8 +61,9 @@ class PynqDriver:
         if not _refclks_done:
             self.refclks(cfg["lmk_freq"], cfg["lmx_freq"])
             _refclks_done = True
-        log.info(f"loading overlay: {xsa}")
-        self.overlay = pynq.Overlay(str(xsa), download=download)
+        overlay_file = _overlay_file(xsa)
+        log.info(f"loading overlay: {overlay_file}")
+        self.overlay = pynq.Overlay(overlay_file, download=download)
         self.rfdc = self.overlay.rf_data_converter
         self.mmio = pynq.MMIO(AXI_BASE, AXI_SIZE)
 
@@ -207,6 +208,21 @@ class PynqDriver:
     def dacvop(self, tile: int, block: int, uA: int) -> None:
         log.info(f"dac vop: tile {tile} block {block} -> {uA} uA")
         self.rfdc.dac_tiles[tile].blocks[block].SetDACVOP(uA)
+
+
+def _overlay_file(xsa: str) -> str:
+    """The file to hand pynq.Overlay. PYNQ 3 loads the bundle's .xsa directly; PYNQ 2.x only takes
+    a .bit with a same-named .hwh beside it, so there the bundle must also carry top.bit + top.hwh
+    (both are inside the .xsa — Vivado writes them next to it too)."""
+    xsa = Path(xsa)
+    if int(pynq.__version__.split(".")[0]) >= 3:
+        return str(xsa)
+    bit, hwh = xsa.with_suffix(".bit"), xsa.with_suffix(".hwh")
+    if not (bit.exists() and hwh.exists()):
+        raise FileNotFoundError(
+            f"PYNQ {pynq.__version__} cannot load an .xsa: put {bit.name} and {hwh.name} "
+            f"next to {xsa.name} in {xsa.parent}")
+    return str(bit)
 
 
 def _check_cma(nbytes: int) -> None:

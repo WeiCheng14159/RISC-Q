@@ -1,8 +1,17 @@
 # ---- Synthesis (+ optional implementation / bitstream), gated by the config run flags --------------
 set_param general.maxThreads 2
+# Retiming on a synth run. Newer Vivado spells it GLOBAL_RETIMING {on|off|auto}; 2023.1 and earlier
+# only have the boolean RETIMING (synth_design -retiming). Pick whichever the run actually has.
+proc riscq_retiming_on {run} {
+  if {[lsearch [list_property $run] STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING] >= 0} {
+    set_property STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING on $run
+  } else {
+    set_property STEPS.SYNTH_DESIGN.ARGS.RETIMING true $run
+  }
+}
 if {$RUN_SYNTH} {
   set_property strategy Flow_PerfOptimized_high [get_runs synth_1]
-  set_property STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING on [get_runs synth_1]
+  riscq_retiming_on [get_runs synth_1]
   # RISCQ_CSET_THRESH raises the control-set optimisation threshold: clock-enable / set-reset nets
   # whose flop fanout is below N are mapped to LUT recirculation instead of the FF's dedicated
   # CE/SR pin, collapsing low-fanout control sets so cells pack densely again. Attacks the per-core
@@ -33,7 +42,7 @@ if {$RUN_SYNTH} {
         puts "\[run\] control-set opt threshold $::env(RISCQ_CSET_THRESH) -> IP run $_r"
       }
       if {[info exists ::env(RISCQ_IP_RETIMING)]} {
-        set_property STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING on $_r
+        riscq_retiming_on $_r
         puts "\[run\] global retiming on -> IP run $_r"
       }
     }

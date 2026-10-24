@@ -35,7 +35,7 @@ For generating the RTL and building the FPGA image:
 | JDK | 21 (tested) | runs mill / Scala 2.12.18 |
 | [mill](https://mill-build.org) | 1.1.0 | pinned in `.mill-version`. Install the mill launcher script. On the first run it fetches that version, Scala and the Maven dependencies (needs network). |
 | git | — | with submodule support |
-| AMD Vivado | **2026.1** | must be on `PATH` (or set `RISCQ_VIVADO_BIN`). Needs Zynq UltraScale+ RFSoC device support and a license that covers `xczu49dr`. The flow uses the Zynq UltraScale+ PS, RF Data Converter, SmartConnect and Processor System Reset IPs. No board files are needed. |
+| AMD Vivado | **2026.1** | must be on `PATH` (or set `RISCQ_VIVADO_BIN`). Needs Zynq UltraScale+ RFSoC device support and a license that covers `xczu49dr`. The flow uses the Zynq UltraScale+ PS, RF Data Converter, SmartConnect and Processor System Reset IPs. No board files are needed. Building with 2023.1 instead: [docs/deploy-vivado-2023.1.md](docs/deploy-vivado-2023.1.md). |
 | Machine | ≥ 32 GB RAM | the 14-qubit implementation peaks at ~16 GB |
 
 Running the simulations and the Python software needs more: Verilator, cocotb, a RISC-V LLVM

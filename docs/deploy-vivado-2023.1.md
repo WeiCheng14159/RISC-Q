@@ -4,8 +4,8 @@ The maintained flow targets **Vivado 2026.1** (see the top-level [README](../REA
 records how to set up a fresh Linux machine and build the ZCU216 image with **Vivado 2023.1**
 instead, and what had to change for it. Nothing here needs root.
 
-Status: **in progress** — RTL generation and block-design assembly verified on 2023.1; synthesis /
-implementation / bitstream results are recorded below once the first full build finishes.
+Status: the full flow (RTL → block design → synth → impl → bitstream → XSA) runs on 2023.1, but
+the 14-qubit build **does not close timing** on `dspClk` — see [Results](#results-on-20231).
 
 ## 1. Host toolchain (user space)
 
@@ -84,6 +84,22 @@ the `STEPS.*` directive / `TCL.PRE` / `POST_ROUTE_PHYS_OPT_DESIGN.IS_ENABLED` pr
 | Failure on 2023.1 | Fix |
 |---|---|
 | `ERROR: [Common 17-54] The object 'run' does not have a property 'STEPS.SYNTH_DESIGN.ARGS.GLOBAL_RETIMING'` | 2023.1 only has the older boolean `STEPS.SYNTH_DESIGN.ARGS.RETIMING`. `inc/run.tcl` now sets retiming through `riscq_retiming_on`, which uses `GLOBAL_RETIMING on` when the run has it and `RETIMING true` otherwise, so the same script still runs on 2026.1. |
+
+### Results on 2023.1
+
+`zcu216-14q-hw23.json`, default knobs (`ExtraNetDelay_high` place, `AggressiveExplore` route, IP
+retiming), 2026-10-24, about 4 h on a 16-core / 30 GB machine (peak 19 GB):
+
+| Clock | WNS | TNS | Failing endpoints |
+|---|---|---|---|
+| `dspClk` (500 MHz) | **−0.782 ns** | −5004 ns | 35,075 / 1,305,932 |
+| `hostClk` (100 MHz) | +1.757 ns | 0 | 0 |
+| `clk_pl_0` | +1.601 ns | 0 | 0 |
+
+Hold is met on every clock (WHS +0.009 ns). The worst paths are in **every core's multiplier**
+(`MulPlugin`: `Execute_RS1/RS2_DATA` → `mul_ppHH`, 8–9 levels of CARRY8/LUT, ~60–68 % routing),
+the path [RISCV.md](riscv/RISCV.md) already names as the core's fmax binder (~508 MHz OOC on
+2026.1). At −0.782 ns the image is good for roughly 360 MHz — **do not run it at 500 MHz**.
 
 ### Expected differences from the results of record
 

@@ -111,14 +111,21 @@ class MulPlugin(p: RiscqParam) extends FiberPlugin {
       val a2Hi = op2(32 downto 17).asSInt
 
       // ---- Partial products, registered on the first cycle (the live operands' bypass window).
-      //      Each is a single signed DSP multiply. ----
+      //      Each is a single signed DSP multiply, pinned with use_dsp on the products only (as in
+      //      ComplexMul): at the 14q SoC's DSP demand the global DSP balancer otherwise demotes some
+      //      to fabric — Vivado 2023.1 built ppHH as a LUT/CARRY8 multiplier in every core, the
+      //      −0.78 ns dspClk binder. ----
+      val mulLL = a1Lo * a2Lo; mulLL.addAttribute("use_dsp", "yes")
+      val mulLH = a1Lo * a2Hi; mulLH.addAttribute("use_dsp", "yes")
+      val mulHL = a1Hi * a2Lo; mulHL.addAttribute("use_dsp", "yes")
+      val mulHH = a1Hi * a2Hi; mulHH.addAttribute("use_dsp", "yes")
       val ppLL = Reg(SInt(36 bits)); val ppLH = Reg(SInt(34 bits))
       val ppHL = Reg(SInt(34 bits)); val ppHH = Reg(SInt(32 bits))
       when(first) {
-        ppLL := a1Lo * a2Lo
-        ppLH := a1Lo * a2Hi
-        ppHL := a1Hi * a2Lo
-        ppHH := a1Hi * a2Hi
+        ppLL := mulLL
+        ppLH := mulLH
+        ppHL := mulHL
+        ppHH := mulHH
       }
 
       // ---- Weighted sum, split across two cycles so no single cycle chains all three additions

@@ -73,7 +73,11 @@ case class CarrierBatchGenerator(batchSize: Int, dataWidth: Int, timeWidth: Int,
 
   // phase pipeline → gPhase (all truncating-wrap = exact phase wrap):
   val batchTime = RegNext(((io.time << log2N).resize(w bits)).asSInt)        // (t·N) mod 2^w, SF(w)
-  val timePhase = RegNext(freqReg * batchTime)                              // 1 DSP, full width
+  // use_dsp on the product only (as in ComplexMul): at the 14q SoC's DSP demand the global DSP
+  // balancer otherwise demotes it to fabric — Vivado 2023.1 did, a −0.32 ns CARRY8 chain.
+  val timePhaseMul = freqReg * batchTime
+  timePhaseMul.addAttribute("use_dsp", "yes")
+  val timePhase = RegNext(timePhaseMul)                                     // 1 DSP, full width
   val gPhase    = RegNext(timePhase.resize(w bits) + phaseReg)              // low w bits + phase, mod 2^w
 
   // One CORDIC: amp·exp(iπ·gPhase), amplitude on the x input. When correctGain = false the

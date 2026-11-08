@@ -1,6 +1,12 @@
 # ---- riscvsoc-bd configuration (script-scope; override any of these from the environment) -----------
 
-set PART          xczu49dr-ffvf1760-2-e
+# Target board: ZCU216 (xczu49dr, CLK104) or RFSoC4x2 (xczu48dr). It picks the part, the RF clock plan
+# (clock-plan.tcl), the RFDC layout (rfdc-<board>.tcl), the clock inputs (bd-build.tcl) and the pin XDC.
+set BOARD         ZCU216
+if {[info exists ::env(RISCQ_BOARD)]}         { set BOARD         $::env(RISCQ_BOARD) }
+set BOARD_PARTS   {ZCU216 xczu49dr-ffvf1760-2-e RFSoC4x2 xczu48dr-ffvg1517-2-e}
+if {![dict exists $BOARD_PARTS $BOARD]} { error "unknown RISCQ_BOARD $BOARD (known: [dict keys $BOARD_PARTS])" }
+set PART          [dict get $BOARD_PARTS $BOARD]
 set TOP_MODULE    PulseTableSoc
 set BD_NAME       riscq_bd
 set DSP_FREQ      500000000
@@ -14,6 +20,9 @@ set RUN_BITSTREAM 0
 if {[info exists ::env(RISCQ_DEVICE)]}        { set PART          $::env(RISCQ_DEVICE) }
 if {[info exists ::env(RISCQ_TOP)]}           { set TOP_MODULE    $::env(RISCQ_TOP) }
 if {[info exists ::env(RISCQ_DSP_FREQ)]}      { set DSP_FREQ      $::env(RISCQ_DSP_FREQ) }
+# RFSoC4x2: hostClk is the PS pl_clk0 (no PL oscillator), 100 MHz from IOPLL = 99.999001 MHz exactly as the
+# PS IP computes it; the packaged IP's FREQ_HZ must match it (bd-build.tcl checks).
+if {$BOARD eq "RFSoC4x2"} { set HOST_FREQ 99999001 }
 if {[info exists ::env(RISCQ_HOST_FREQ)]}     { set HOST_FREQ     $::env(RISCQ_HOST_FREQ) }
 if {[info exists ::env(RISCQ_RUN_SYNTH)]}     { set RUN_SYNTH     $::env(RISCQ_RUN_SYNTH) }
 if {[info exists ::env(RISCQ_RUN_IMPL)]}      { set RUN_IMPL      $::env(RISCQ_RUN_IMPL) }
@@ -40,7 +49,7 @@ set IP_REPO     $BUILD_DIR/ip
 # subset create_project accepts.
 set PRJ         [regsub -all {[^A-Za-z0-9_]} $PROJ_NAME _]
 
-puts "\[config\] top=$TOP_MODULE part=$PART dsp=${DSP_FREQ}Hz host=${HOST_FREQ}Hz  synth=$RUN_SYNTH impl=$RUN_IMPL bit=$RUN_BITSTREAM"
+puts "\[config\] board=$BOARD top=$TOP_MODULE part=$PART dsp=${DSP_FREQ}Hz host=${HOST_FREQ}Hz  synth=$RUN_SYNTH impl=$RUN_IMPL bit=$RUN_BITSTREAM"
 puts "\[config\] rtl=$SOURCE_PATH  build=$BUILD_DIR"
 
 if {![file exists $SOURCE_PATH/$TOP_MODULE.v]} {

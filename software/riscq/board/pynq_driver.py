@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
@@ -23,7 +24,7 @@ AXI_BASE = 0x8000_0000   # riscvsoc-bd flow: bd-build.tcl assign_bd_address -off
 AXI_SIZE = 0x1000_0000   # ... -range
 
 # board.json defaults; tile/block keys are "tile,block" strings. "board" picks the RF clock plan's board
-# (default ZCU216); the clock keys (lmk_file / lmx_file / ref_tile / mts_tiles / mts) default from it.
+# (default: PYNQ's $BOARD if it has plans, else ZCU216); the clock keys (lmk_file / lmx_file / ref_tile / mts_tiles / mts) default from it.
 BOARD_DEFAULTS = {
     "adc_nyquist": 1,
     "dac_nyquist": {"default": 2},
@@ -42,19 +43,33 @@ CLOCK_ROOT = Path(__file__).with_name("clocks")
 # the sample clock to the other tiles. The bitstream side is vivado-scripts/riscvsoc-bd/inc/
 # clock-plan.tcl (same plan name, same ref tile). MTS targets stay None (free sync, latencies
 # reported) until a board measurement pins them in board.json "mts".
+# dac_blocks / adc_blocks: the (tile, block) converters the build enables and the board bonds out, in the
+# SoC's DAC / ADC channel order (vivado-scripts/riscvsoc-bd/inc/rfdc-*.tcl).
 _NATIVE_FILES = {"lmk_file": "LMK04828_10.0_250.0_500.0_10.0.txt", "lmx_file": "LMX2594_250.0_500.0.txt"}
+_ALL_4X4 = tuple((t, b) for t in range(4) for b in range(4))
 CLOCK_PLANS = {
     # The CLK104's LMX2594 outputs reach ADC 225 / DAC 229: tile 1 refs and distributes; all 4x4 used.
     "ZCU216": {
         500e6: {"plan": "native", **_NATIVE_FILES, "ref_tile": 1, "mts_tiles": 0b1111,
+                "dac_blocks": _ALL_4X4, "adc_blocks": _ALL_4X4,
                 "mts": {"daclatency": None, "adclatency": None}},
     },
-    # Only tiles 0 and 2 are bonded out (ADC 224/226, DAC 228/230); tile 2 refs and distributes.
+    # Bonded out: DAC 228 / 230 (block 0) and both converters of the dual ADC tiles 224 / 226. Tile 2 takes
+    # the reference and distributes it through relay tile 1 (each used tile runs its own PLL); MTS syncs
+    # tiles 0 and 2.
     "RFSoC4x2": {
         500e6: {"plan": "native", **_NATIVE_FILES, "ref_tile": 2, "mts_tiles": 0b0101,
+                "dac_blocks": ((0, 0), (2, 0)), "adc_blocks": ((0, 0), (0, 1), (2, 0), (2, 1)),
                 "mts": {"daclatency": None, "adclatency": None}},
     },
 }
+
+
+def _env_board() -> str:
+    """The board PYNQ's login profile names ($BOARD: ZCU216, RFSoC4x2, ...) when it has a clock plan,
+    else DEFAULT_BOARD — board.json "board" overrides both."""
+    env = os.environ.get("BOARD", "")
+    return env if env in CLOCK_PLANS else DEFAULT_BOARD
 
 
 def clock_plan(dsp_freq_hz: float, board: str = DEFAULT_BOARD) -> dict:
@@ -97,7 +112,7 @@ class PynqDriver:
 
         self.params_text = Path(params_json).read_text()
         dsp_freq_hz = float(json.loads(self.params_text)["dsp_freq_hz"])
-        board_name = (board or {}).get("board", DEFAULT_BOARD)
+        board_name = (board or {}).get("board") or _env_board()
         cfg = {**BOARD_DEFAULTS, **clock_plan(dsp_freq_hz, board_name), **(board or {})}
         self.cfg = cfg
         self.ref_tile = int(cfg["ref_tile"])
@@ -131,10 +146,8 @@ class PynqDriver:
             self.mts_result = None
         log.info(f"mts: {self.mts_result}")
         zones = cfg["dac_nyquist"]
-        for tile in range(4):
-            for block in range(4):
-                self.dac_nyquist_zone(tile, block,
-                                      zones.get(f"{tile},{block}", zones.get("default", 2)))
+        for tile, block in cfg.get("dac_blocks", _ALL_4X4):
+            self.dac_nyquist_zone(tile, block, zones.get(f"{tile},{block}", zones.get("default", 2)))
         self.adc_nyquist_zone(cfg["adc_nyquist"])
         for tileblock, uA in cfg["dac_current"].items():
             tile, block = (int(x) for x in tileblock.split(","))
@@ -301,9 +314,9 @@ class PynqDriver:
         return out
 
     def adc_nyquist_zone(self, n: int) -> None:
-        for tile in range(4):        # rfdc-config.tcl enables every slice: full 4x4
-            for block in range(4):
-                self.rfdc.adc_tiles[tile].blocks[block].NyquistZone = n
+        # every converter the build enables: the ZCU216's full 4x4, the RFSoC4x2's four (clock plan)
+        for tile, block in (getattr(self, "cfg", None) or {}).get("adc_blocks", _ALL_4X4):
+            self.rfdc.adc_tiles[tile].blocks[block].NyquistZone = n
 
     def dac_nyquist_zone(self, tile: int, block: int, n: int) -> None:
         self.rfdc.dac_tiles[tile].blocks[block].NyquistZone = n

@@ -46,11 +46,11 @@ ipx::associate_bus_interfaces -busif S_AXIS -clock dspClk -remove [ipx::current_
 # the host-window write master (docs/soc/HostWindow.md) runs in hostCd, straight into S_AXI_HP0_FPD
 ipx::associate_bus_interfaces -busif M_AXI_HOST -clock hostClk [ipx::current_core]
 ipx::associate_bus_interfaces -busif M_AXI_HOST -clock dspClk -remove [ipx::current_core]
-for {set i 0} {$i < 16} {incr i} {
-  ipx::associate_bus_interfaces -busif DAC${i}_AXIS -clock dspClk [ipx::current_core]
-  ipx::associate_bus_interfaces -busif DAC${i}_AXIS -clock hostClk -remove [ipx::current_core]
-  ipx::associate_bus_interfaces -busif ADC${i}_AXIS -clock dspClk [ipx::current_core]
-  ipx::associate_bus_interfaces -busif ADC${i}_AXIS -clock hostClk -remove [ipx::current_core]
+# every DAC{i}_AXIS / ADC{i}_AXIS the config has (16 + 16 on the ZCU216 builds, 2 + 4 on the RFSoC4x2)
+foreach _b [ipx::get_bus_interfaces -of_objects [ipx::current_core] -filter {NAME =~ "DAC*_AXIS" || NAME =~ "ADC*_AXIS"}] {
+  set _n [get_property NAME $_b]
+  ipx::associate_bus_interfaces -busif $_n -clock dspClk [ipx::current_core]
+  ipx::associate_bus_interfaces -busif $_n -clock hostClk -remove [ipx::current_core]
 }
 
 # reset polarities

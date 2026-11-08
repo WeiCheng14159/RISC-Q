@@ -67,14 +67,19 @@ if [ -z "${RISCQ_DSP_FREQ:-}" ]; then
   RISCQ_DSP_FREQ="$(python3 -c 'import json,sys; print(int(float(json.load(open(sys.argv[1]))["dsp_freq_hz"])))' "$CONFIG")"
 fi
 export RISCQ_DSP_FREQ
-export RISCQ_PBLOCK=1
-export RISCQ_PBLOCK_TCL="$BD_DIR/pblocks-bd.tcl"
+# Board (inc/config.tcl): ZCU216 (default) or RFSoC4x2. The floorplan (pblocks-bd.tcl) is the ZCU216's
+# clock-region layout, so it is applied there only (RISCQ_FLOORPLAN=0 turns it off on the ZCU216 too).
+export RISCQ_BOARD="${RISCQ_BOARD:-ZCU216}"
+if [ "$RISCQ_BOARD" = "ZCU216" ] && [ "${RISCQ_FLOORPLAN:-1}" != "0" ]; then
+  export RISCQ_PBLOCK=1
+  export RISCQ_PBLOCK_TCL="$BD_DIR/pblocks-bd.tcl"
+fi
 export RISCQ_IP_RETIMING=1
 export RISCQ_PLACE_DIRECTIVE="${RISCQ_PLACE_DIRECTIVE:-ExtraNetDelay_high}"   # route stays AggressiveExplore (run.tcl)
 export RISCQ_RUN_IMPL=1
 export RISCQ_RUN_BITSTREAM="${RISCQ_RUN_BITSTREAM:-1}"   # bitstream + XSA (hardware handoff) by default; set 0 for impl-only
 
-echo "[riscvsoc-bd] building block design in $BUILD (floorplan, IP retiming, place=$RISCQ_PLACE_DIRECTIVE / route=AggressiveExplore, bitstream+xsa=$RISCQ_RUN_BITSTREAM) …"
+echo "[riscvsoc-bd] building block design for $RISCQ_BOARD in $BUILD (floorplan=${RISCQ_PBLOCK:-off}, IP retiming, place=$RISCQ_PLACE_DIRECTIVE / route=AggressiveExplore, bitstream+xsa=$RISCQ_RUN_BITSTREAM) …"
 "$VIVADO_BIN/vivado" -nojournal -mode batch -log "$BUILD/vivado.log" -source "$BD_DIR/flow-bd.tcl"
 
 echo "[riscvsoc-bd] ===================================================================="

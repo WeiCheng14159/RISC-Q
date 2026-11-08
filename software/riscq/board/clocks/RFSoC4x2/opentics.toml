@@ -18,11 +18,13 @@ fosc = 250
 fout_a = 500
 fout_b = 500
 
-# LMK04828: 10 MHz CLKin, 160 MHz VCXO, VCO 3000 MHz.
+# LMK04828: 10 MHz CLKin, 160 MHz VCXO, VCO 3000 MHz. Base: the 125 MHz project, whose PL_CLK (CLKout8) and
+# PL_SYSREF (SDCLKout9) are HSDS8 — the 4x2 takes both single-ended (LVCMOS18, AN11 / AP18), and Xilinx's
+# RFSoC-MTS 4x2 design drives them HSDS8 too; the 250 MHz project has them LVDS.
 #   CLKout8 = 500 MHz PL_CLK (dspClk), CLKout0/2/4/6/10/12 = 250 MHz (LMX references), SYSREF 10 MHz.
 #   10 MHz divides 500 MHz, 8 GHz and 2 GHz, so it is a valid MTS SYSREF for every clock above.
 [[lmk04828]]
-base = "../../../../../../ticspro-container/virtual_disk/clk_config_files/RFSoC4x2/my_config/LMK04828_10.0_250.0_250.0_10.0.tcs"
+base = "../../../../../../ticspro-container/virtual_disk/clk_config_files/RFSoC4x2/my_config/LMK04828_10.0_250.0_125.0_10.0.tcs"
 clkin = 10
 sysref = 10
 outputs = { 0 = 250, 2 = 250, 4 = 250, 6 = 250, 8 = 500, 10 = 250, 12 = 250 }

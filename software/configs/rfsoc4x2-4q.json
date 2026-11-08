@@ -1,0 +1,20 @@
+{
+    "name": "rfsoc4x2-4q",
+    "qubit_num": 4,
+    "dac_num": 2,
+    "adc_num": 4,
+    "dac_map": [[0, 1], [0, 1], [0, 1], [0, 1]],
+    "adc_map": [0, 0, 0, 0],
+    "mem_depth": 4096,
+    "env_depth": 1024,
+    "rob_depth": 1024,
+    "gate_pulse_num": 8,
+    "gate_interp": 4,
+    "readout_interp": 16,
+    "demod_interp": 4,
+    "link_pipe": 4,
+    "hostwin_bits": 23,
+    "queue_depth": 4,
+    "with_mul": true,
+    "dsp_freq_hz": 500000000.0
+}

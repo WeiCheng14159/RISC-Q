@@ -19,6 +19,7 @@ import pytest
 REPO = Path(__file__).resolve().parents[2]
 CONFIGS = REPO / "software" / "configs"
 TCL_PLAN = REPO / "vivado-scripts" / "riscvsoc-bd" / "inc" / "clock-plan.tcl"
+TCL_RFDC_4X2 = REPO / "vivado-scripts" / "riscvsoc-bd" / "inc" / "rfdc-rfsoc4x2.tcl"
 
 
 @pytest.fixture
@@ -45,22 +46,46 @@ def drv(monkeypatch):
 
 
 def _tcl_plans() -> dict:
+    """{board: {plan: {key: value}}} from clock-plan.tcl's nested CLOCK_PLANS dict."""
     body = re.search(r"set CLOCK_PLANS \{(.*?)\n\}", TCL_PLAN.read_text(), re.S).group(1)
     plans = {}
-    for name, fields in re.findall(r"(\w+)\s+\{([^}]*)\}", body):
-        kv = fields.split()
-        plans[name] = dict(zip(kv[::2], kv[1::2]))
+    for board, inner in re.findall(r"(\w+)\s+\{((?:\s*\w+\s+\{[^}]*\})+)\s*\}", body):
+        plans[board] = {name: dict(zip(f.split()[::2], f.split()[1::2]))
+                        for name, f in re.findall(r"(\w+)\s+\{([^}]*)\}", inner)}
     return plans
 
 
 def test_python_and_tcl_plans_agree(drv):
-    tcl = _tcl_plans()                                   # the Vivado flow builds the ZCU216 only
-    zcu = drv.CLOCK_PLANS["ZCU216"]
-    assert set(tcl) == {p["plan"] for p in zcu.values()}
-    for freq, plan in zcu.items():
-        t = tcl[plan["plan"]]
-        assert float(t["dsp"]) == freq
-        assert int(t["tile"]) == plan["ref_tile"]
+    tcl = _tcl_plans()
+    assert set(tcl) == set(drv.CLOCK_PLANS)
+    for board, plans in drv.CLOCK_PLANS.items():
+        assert set(tcl[board]) == {p["plan"] for p in plans.values()}
+        for freq, plan in plans.items():
+            t = tcl[board][plan["plan"]]
+            assert float(t["dsp"]) == freq
+            assert int(t["tile"]) == plan["ref_tile"]
+            assert plan["mts_tiles"] >> plan["ref_tile"] & 1             # the ref tile is in the sync
+
+
+def test_rfsoc4x2_blocks_match_rfdc_wiring(drv):
+    """The driver's (tile, block) lists are the converters rfdc-rfsoc4x2.tcl wires, in channel order:
+    DAC s{t}0 -> (t, 0); dual-tile ADC m{t}0 / m{t}2 -> blocks 0 / 1."""
+    text = TCL_RFDC_4X2.read_text()
+    dacs = re.search(r"set _dac_map \{(.*?)\}\n", text).group(1)
+    adcs = re.search(r"set _adc_map \{(.*?)\}\n", text).group(1)
+    dac = [(int(a[1]), int(a[2]) // 2) for a in re.findall(r"\{(s\d\d) ", dacs)]
+    adc = [(int(a[1]), int(a[2]) // 2) for a in re.findall(r"\{(m\d\d) ", adcs)]
+    plan = drv.clock_plan(500e6, "RFSoC4x2")
+    assert dac == list(plan["dac_blocks"]) and adc == list(plan["adc_blocks"])
+    cfg = json.loads((CONFIGS / "rfsoc4x2-4q.json").read_text())
+    assert (cfg["dac_num"], cfg["adc_num"]) == (len(dac), len(adc))
+
+
+def test_board_from_pynq_env(drv, monkeypatch):
+    monkeypatch.setenv("BOARD", "RFSoC4x2")
+    assert drv._env_board() == "RFSoC4x2"
+    monkeypatch.setenv("BOARD", "ZCU111")                               # no plans: fall back
+    assert drv._env_board() == "ZCU216"
 
 
 _CHDIV = [2, 4, 6, 8, 12, 16, 24, 32, 48, 64, 72, 96, 128, 192, 256, 384, 512, 768]
@@ -104,15 +129,16 @@ def test_native_plan_files_meet_riscq_rates(drv, board):
     for f in (500.0, 8000.0, 2000.0):                    # SYSREF divides dspClk and both sample clocks
         assert (f / k["sysref"]) == pytest.approx(round(f / k["sysref"]))
     x = _lmx_out_mhz(lmx, k[0])
-    refclk = float(_tcl_plans()["native"]["refclk_mhz"])
+    refclk = float(_tcl_plans()[board]["native"]["refclk_mhz"])
     assert x["b"] == pytest.approx(refclk)               # RFoutB: the RFDC reference on both boards
     assert 16 * 500.0 / refclk == 16 and 4 * 500.0 / refclk == 4   # integer tile-PLL multipliers
     assert x["a"] is None if board == "ZCU216" else x["a"] == pytest.approx(refclk)
 
 
 def test_configs_have_plans(drv):
-    for name in ("zcu216-14q.json", "zcu216-14q-hw23.json"):
-        drv.clock_plan(float(json.loads((CONFIGS / name).read_text())["dsp_freq_hz"]))
+    for name, board in (("zcu216-14q.json", "ZCU216"), ("zcu216-14q-hw23.json", "ZCU216"),
+                        ("zcu216-2q.json", "ZCU216"), ("rfsoc4x2-4q.json", "RFSoC4x2")):
+        drv.clock_plan(float(json.loads((CONFIGS / name).read_text())["dsp_freq_hz"]), board)
     with pytest.raises(ValueError, match="no RF clock plan"):
         drv.clock_plan(300e6)
     with pytest.raises(ValueError, match="no RF clock plans for board"):

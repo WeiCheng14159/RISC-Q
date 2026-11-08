@@ -36,7 +36,22 @@ cd vivado-scripts/riscvsoc-bd
 RISCQ_RUN_BITSTREAM=0 ./build-riscvsoc-bd.sh # stop after impl (no bitstream / XSA)
 RISCQ_CONFIG=software/configs/x6y3.json ./build-riscvsoc-bd.sh   # a different SocSpec JSON (repo-relative)
 ./close-incremental.sh                       # then: the incremental TimingClosure pass on that build
+RISCQ_BOARD=RFSoC4x2 RISCQ_CONFIG=software/configs/rfsoc4x2-4q.json RISCQ_PROJ_NAME=rfsoc4x2-4q \
+  ./build-riscvsoc-bd.sh                     # the RFSoC4x2 (xczu48dr) port, no floorplan
 ```
+
+**Boards.** `RISCQ_BOARD` (default `ZCU216`) selects the part, the RF clock plan (`inc/clock-plan.tcl`),
+the RFDC script and the clock inputs:
+
+| | ZCU216 (`xczu49dr`) | RFSoC4x2 (`xczu48dr`) |
+|---|---|---|
+| Converters | 16 DAC + 16 ADC (`inc/rfdc-config.tcl` + `rfdc-connect.tcl`) | DAC 228/230 + ADC 224/226 ×2 = 2 + 4 (`inc/rfdc-rfsoc4x2.tcl`); config `dac_num 2`, `adc_num 4` |
+| RF reference | 500 MHz into tile 1, its PLL output distributed | 500 MHz into tile 2, the reference distributed through relay tile 1 (DAC229 tops out at 7 GS/s), one PLL per used tile |
+| `dspClk` | CLK104 PL_CLK, LVDS E10/E9 → `ClockInterface` | LMK04828 PL_CLK, single-ended AN11 → BUFG |
+| `hostClk` | 100 MHz LVDS oscillator G12/G11 | PS `pl_clk0`, 99.999 MHz (IOPLL) |
+| SYSREF | LVDS E11/D11 | single-ended AP18 |
+| Pins | `constraints-zcu216.xdc` | `constraints-rfsoc4x2.xdc` |
+| Floorplan | `pblocks-bd.tcl` | none |
 
 **Re-build, 8 cores (2026-09-18, `x6y3.json` + the wrap-safe `waitTimeCmp` — [SOC_TIPS](../../docs/soc/SOC_TIPS.md) §5):**
 `RISCQ_CONFIG=software/configs/x6y3.json RISCQ_PROJ_NAME=x6y3-bd-wrapfix ./build-riscvsoc-bd.sh` meets
@@ -79,8 +94,8 @@ This flow is **self-contained** — everything it needs lives in this directory 
 |---|---|
 | `build-riscvsoc-bd.sh` | driver: generate BD RTL into the build dir, then launch Vivado on `flow-bd.tcl` with the floorplan + IP retiming |
 | `flow-bd.tcl` | proc-free driver: sets config vars, then `source`s the `inc/*.tcl` steps |
-| `inc/{config,create-project,package-ip,bd-build,bd-finalize,rfdc-config,rfdc-connect,run}.tcl` | the BD assembly: project, IP packaging, PS + RFDC + SmartConnect, synth + impl |
-| `constraints-zcu216.xdc` | ZCU216 pin/clock constraints (added to the BD wrapper) |
+| `inc/{config,clock-plan,create-project,package-ip,bd-build,bd-finalize,rfdc-config,rfdc-connect,rfdc-rfsoc4x2,run}.tcl` | the BD assembly: project, IP packaging, PS + RFDC + SmartConnect, synth + impl |
+| `constraints-zcu216.xdc` / `constraints-rfsoc4x2.xdc` | the board's pin constraints (added to the BD wrapper; clock periods are written per build) |
 | `constraints-wr.xdc` | White Rabbit GTY/SFP0 constraints, added only when the config sets `with_white_rabbit` |
 | `pblocks-bd.tcl` | the floorplan ported into the block-design hierarchy |
 | `close-incremental.sh` + `inc/incr-close.tcl` | the optional incremental `TimingClosure` pass on a finished build (`timing_incr.rpt`, `routed_incr.dcp`) |
@@ -93,7 +108,7 @@ The driver selects the floorplan + core retiming through two `inc/run.tcl` hooks
 
 ## Env knobs
 
-Handled by `build-riscvsoc-bd.sh`: `RISCQ_VIVADO_BIN`, `RISCQ_CONFIG` (`software/configs/zcu216-14q.json`),
+Handled by `build-riscvsoc-bd.sh`: `RISCQ_BOARD` (`ZCU216` | `RFSoC4x2`), `RISCQ_FLOORPLAN` (`0` drops the ZCU216 floorplan), `RISCQ_VIVADO_BIN`, `RISCQ_CONFIG` (`software/configs/zcu216-14q.json`),
 `RISCQ_SKIP_GEN`, `RISCQ_PROJ_NAME` (`riscvsoc-bd`), `RISCQ_RUN_BITSTREAM` (`1` = bitstream + XSA; `0` =
 impl only), `RISCQ_PLACE_DIRECTIVE` (`ExtraNetDelay_high`).
 

@@ -101,6 +101,51 @@ Hold is met on every clock (WHS +0.009 ns). The worst paths are in **every core'
 the path [RISCV.md](riscv/RISCV.md) already names as the core's fmax binder (~508 MHz OOC on
 2026.1). At −0.782 ns the image is good for roughly 360 MHz — **do not run it at 500 MHz**.
 
+With the multiplier pinned to DSPs (`MulPlugin`, `use_dsp` on the four partial products) the next
+500 MHz build reached about −0.32 ns after routing, now limited by the demod carrier's fabric-built
+`freqReg × batchTime` multiply. That one is pinned too (`CarrierBatchGenerator`), but its 500 MHz
+build was stopped in favour of the 300 MHz clock plan below.
+
+### RF clock plans: building on SPEAR's ZCU216 clocking
+
+The converters take a fixed 16 DAC / 4 ADC samples per `dspClk` cycle, so `dsp_freq_hz` in the
+config picks the sample rates. It also picks the clock tree that has to deliver them. The plan
+table exists twice and the two copies must agree:
+[`inc/clock-plan.tcl`](../vivado-scripts/riscvsoc-bd/inc/clock-plan.tcl) for the build and
+`riscq.board.pynq_driver.CLOCK_PLANS` for the board; `tests/test_board_clocks.py` checks that they do.
+
+| Plan | `dsp_freq_hz` | DAC / ADC | Reference into | Clock files | MTS targets |
+|---|---|---|---|---|---|
+| `qubic` (RISC-Q reference) | 500 MHz | 8 / 2 GS/s | tile 2 (DAC 230 / ADC 226), 500 MHz | xrfclk `LMK04828_500.25` (from qcal-riscq, not on zcu216-0) | 240 / 72 |
+| `spear` | 300 MHz | 4.8 / 1.2 GS/s | tile 1 (DAC 229 / ADC 225), 300 MHz | SPEAR `LMK04828_10.0_250.0_300.0_10.0` + `LMX2594_250.0_300.0`, bundled in `software/riscq/board/clocks/ZCU216/` | not measured yet (free sync) |
+
+The `spear` plan reuses SPEAR's proven zcu216-0 assets unchanged:
+
+- **LMK04828.** It is SPEAR's runtime default file (`rfsoc_lib/rfdc_task.py`): 10 MHz in,
+  250 MHz to the LMXs, 300 MHz PL_CLK on E10/E9 (RISC-Q's `dspClk` pins) and 10 MHz SYSREF on
+  E11/D11.
+- **LMX2594.** Its register image is SPEAR's 2400 MHz direct-sampling file with a different
+  channel divider: the same 9.6 GHz VCO and output B, giving 300 MHz.
+- **Tile layout.** The reference enters tile 1, the tile SPEAR's shells distribute from and use as
+  the MTS reference. Tile 1's PLL makes the sample clock and distributes it to tiles 0, 2 and 3.
+- **Programming.** `PynqDriver.program_clock_files` uses SPEAR's `clocks.py` method: raw TICS
+  writes through `xrfclk`'s SPI helpers. Nothing has to be installed into the board's `xrfclk`
+  package.
+
+What the user-visible rates become at 300 MHz:
+
+- One batch is 3.33 ns instead of 2 ns.
+- DAC Nyquist drops from 4 GHz to 2.4 GHz, and ADC Nyquist from 1 GHz to 600 MHz.
+- The cores run at 300 MHz.
+
+The software derives all of this from `dsp_freq_hz` (`riscq.pulses.units`, the calibration
+code), so programs are unchanged. Frequencies and IFs in a qcal config have to fit the new bands.
+
+```bash
+RISCQ_CONFIG=software/configs/zcu216-14q-spear.json RISCQ_PROJ_NAME=zcu216-14q-spear \
+  RISCQ_VIVADO_BIN=/opt/Xilinx/Vivado/2023.1/bin ./vivado-scripts/riscvsoc-bd/build-riscvsoc-bd.sh
+```
+
 ### Expected differences from the results of record
 
 The timing numbers in [vivado-scripts/riscvsoc-bd/README.md](../vivado-scripts/riscvsoc-bd/README.md)
@@ -120,7 +165,17 @@ software was written against:
 | **CMA is 128 MB.** The default 14-qubit build needs 14 × 16 MB = 224 MB for the host window, and `hostwin_bits` is baked into the RTL. | Build `software/configs/zcu216-14q-hw23.json` (`hostwin_bits: 23`, 8 MB per core = 112 MB): `RISCQ_CONFIG=software/configs/zcu216-14q-hw23.json RISCQ_PROJ_NAME=zcu216-14q-hw23 ...build-riscvsoc-bd.sh` |
 | **PYNQ 2.7 cannot load an `.xsa`**; `pynq.Overlay` wants a `.bit` with a same-named `.hwh`. | `PynqDriver` now falls back to `top.bit` + `top.hwh` beside `top.xsa` on PYNQ < 3. Put all three (and `params.json`) in the bundle directory. |
 | **Python 3.8**, while `pyproject.toml` says `>=3.10`. Every board-side module (`riscq`, `map`, `spec`, `build`, `run`, `driver`, `driver.remote`, `board`, `board.server`, `board.pynq_driver`) imports fine on 3.8. | Run from source instead of installing the wheel: `PYTHONPATH=<repo>/software:pyro5-*.whl:serpent-*.whl`, in a login shell (`bash -l`) so PYNQ's profile sets `BOARD=ZCU216`, which `xrfclk` needs at import. |
-| **No 500.25 MHz LMK04828 register file.** The stock `xrfclk` has only LMK04828 245.76 MHz (plus LMK04832/LMK04208 122.88 MHz and a few LMX2594 files); `PynqDriver` calls `xrfclk.set_ref_clks(lmk_freq=500.25)`, inherited from qcal-riscq. | **Unresolved.** The matching TICS file has to come from qcal-riscq/QubiC (installed into the board's `xrfclk` directory), or the RFDC clock plan in `rfdc-config.tcl` (DAC 8 GS/s, no tile PLL; ADC 2 GS/s from the ADC tile-2 PLL at a 500 MHz reference) has to be reworked against a clock file the board has. |
+| **No 500.25 MHz LMK04828 register file.** The stock `xrfclk` has only LMK04828 245.76 MHz (plus LMK04832/LMK04208 122.88 MHz and a few LMX2594 files). The `qubic` plan calls `xrfclk.set_ref_clks(lmk_freq=500.25)`, inherited from qcal-riscq. | Use the `spear` plan (`zcu216-14q-spear.json`), which programs its own bundled clock files. The `qubic` plan still needs qcal-riscq's file installed into the board's `xrfclk` directory. |
+
+SPEAR's own zcu216-0 notes (`hw_design/ZCU216/CLAUDE.md` in SPEAR-riscv) flag two board
+issues to check at the first bring-up, before trusting any data:
+
+- **ADC reference clock.** As of 2026-09-01 the ADC-side LMX2594 / `ADC_225_CLK` path delivered
+  no usable clock: all four ADC tile PLLs read unlocked while the DAC tiles locked. Check the ADC
+  tile PLL lock before trusting readout.
+- **DAC MTS.** `mts_dac()` raised "Alignment correction delay 31 required exceeds maximum (31)"
+  under SPEAR's sync sequence. The `spear` plan only runs a free sync and reports
+  `mts_latencies` in `info()`.
 
 ### Generic flow
 

@@ -1,0 +1,28 @@
+# RISC-Q native RF clocking for the RFSoC4x2, generated with opentics
+# (opentics in the ticspro-container repo, policy "recommended").
+#   dspClk 500 MHz  ->  DAC 8 GS/s (x16), ADC 2 GS/s (x4), set by the RFDC tile-2 PLLs from 500 MHz.
+# Regenerate in place, with ticspro-container cloned next to RISC-Q:
+#   opentics batch software/riscq/board/clocks/RFSoC4x2/opentics.toml --force
+# The base projects are the board's own TICS Pro projects; they supply everything that is not a
+# frequency decision (output formats, power-downs, SYSREF routing), so the files stay RFSoC4x2-specific.
+
+[defaults]
+policy = "recommended"
+output_dir = "."
+
+# LMX2594 (both devices, ADC and DAC side): 250 MHz in -> 500 MHz reference for the tile PLLs.
+# fpd 25 MHz, N 320 (integer), VCO 8000 MHz (VCO1, calibration start estimated), CHDIV 16.
+[[lmx2594]]
+base = "../../../../../../ticspro-container/virtual_disk/clk_config_files/RFSoC4x2/my_config/LMX2594_250.0_2500.0.tcs"
+fosc = 250
+fout_a = 500
+fout_b = 500
+
+# LMK04828: 10 MHz CLKin, 160 MHz VCXO, VCO 3000 MHz.
+#   CLKout8 = 500 MHz PL_CLK (dspClk), CLKout0/2/4/6/10/12 = 250 MHz (LMX references), SYSREF 10 MHz.
+#   10 MHz divides 500 MHz, 8 GHz and 2 GHz, so it is a valid MTS SYSREF for every clock above.
+[[lmk04828]]
+base = "../../../../../../ticspro-container/virtual_disk/clk_config_files/RFSoC4x2/my_config/LMK04828_10.0_250.0_250.0_10.0.tcs"
+clkin = 10
+sysref = 10
+outputs = { 0 = 250, 2 = 250, 4 = 250, 6 = 250, 8 = 500, 10 = 250, 12 = 250 }

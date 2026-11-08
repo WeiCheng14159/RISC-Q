@@ -288,7 +288,7 @@ CONFIG.DAC_Slice33_Enable {true}
 # Clock tree from the RF clock plan (clock-plan.tcl). Sample rates follow dspClk (16 DAC / 4 ADC samples
 # per cycle). Tile $RF_CLK_TILE takes the CLK104 reference into its PLL and distributes the PLL output
 # (Clock_Dist 2); the other three tiles run PLL-less on that distributed sample clock. Clock_Source
-# codes: ADC tile t = t, DAC tile t = t + 4. The qubic plan reproduces the verbatim values above.
+# codes: ADC tile t = t, DAC tile t = t + 4. With tile 2 this reproduces the verbatim values above.
 foreach {kind fs_mhz outdiv srcbase} [list DAC $DAC_FS_MHZ 16 4 ADC $ADC_FS_MHZ 8 0] {
   for {set t 0} {$t < 4} {incr t} {
     set src [expr {$t == $RF_CLK_TILE}]

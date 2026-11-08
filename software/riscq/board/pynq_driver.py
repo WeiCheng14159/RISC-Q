@@ -266,6 +266,29 @@ class PynqDriver:
         return ([self.rfdc.mts_dac_config.Latency[i] for i in range(4)],
                 [self.rfdc.mts_adc_config.Latency[i] for i in range(4)])
 
+    def rf_status(self) -> dict:
+        """Per-tile RFDC readback, to print before trusting any data: IPStatus State (15 = running),
+        PowerUpState, PLLState, the tile's PLLLockStatus (xrfdc: 1 = unlocked, 2 = locked; only the
+        plan's ref tile runs a PLL, the others take its distributed clock) and ClockSource."""
+        ip = self.rfdc.IPStatus
+        out = {}
+        for kind, tiles, key in (("dac", self.rfdc.dac_tiles, "DACTileStatus"),
+                                 ("adc", self.rfdc.adc_tiles, "ADCTileStatus")):
+            rows = []
+            for t in range(4):
+                st = ip[key][t]
+                row = {k: int(st[k]) for k in ("TileState", "PowerUpState", "PLLState", "BlockStatusMask")
+                       if k in st}
+                for prop in ("PLLLockStatus", "ClockSource"):
+                    try:
+                        row[prop] = int(getattr(tiles[t], prop))
+                    except Exception as e:      # a tile without a PLL may refuse the query
+                        row[prop] = f"err: {e}"
+                rows.append(row)
+            out[kind] = rows
+        out["state"] = int(ip.get("State", -1))
+        return out
+
     def adc_nyquist_zone(self, n: int) -> None:
         for tile in range(4):        # rfdc-config.tcl enables every slice: full 4x4
             for block in range(4):

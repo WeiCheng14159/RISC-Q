@@ -94,6 +94,15 @@ class BoardServer:
             raise RuntimeError("no bundle loaded — call load(<bundle>) first")
         return self._params
 
+    def _rf_status(self):
+        status = getattr(self._drv, "rf_status", None)
+        if status is None:
+            return None
+        try:
+            return status()
+        except Exception as e:      # info() must answer even when the RFDC readback cannot
+            return {"error": repr(e)}
+
     @_locked
     def info(self):
         try:
@@ -105,6 +114,7 @@ class BoardServer:
                 "mts_result": getattr(self._drv, "mts_result", None),
                 "mts_latencies": getattr(self._drv, "mts_latencies", None),
                 "clock_plan": (getattr(self._drv, "cfg", None) or {}).get("plan"),
+                "rf_status": self._rf_status(),
                 "versions": {"python": sys.version.split()[0], "riscq": riscq_version}}
 
     # ── server-side batch runner: the SAME riscq.run functions next to the MMIO window, one RPC

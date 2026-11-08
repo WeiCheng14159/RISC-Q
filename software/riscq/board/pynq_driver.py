@@ -7,6 +7,7 @@ driver, same board) — and stay unverified until M6 hardware bring-up."""
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
 import re
 from pathlib import Path
@@ -21,18 +22,51 @@ log = logging.getLogger(__name__)
 AXI_BASE = 0x8000_0000   # riscvsoc-bd flow: bd-build.tcl assign_bd_address -offset
 AXI_SIZE = 0x1000_0000   # ... -range
 
-# board.json defaults; tile/block keys are "tile,block" strings
+# board.json defaults; tile/block keys are "tile,block" strings. The clock keys (lmk_freq / lmx_freq /
+# lmk_file / lmx_file / ref_tile / mts) default from the build's RF clock plan, below.
 BOARD_DEFAULTS = {
-    "lmk_freq": 500.25,                             # qcal-riscq's proven value on this board
-    "lmx_freq": None,
     "adc_nyquist": 1,
     "dac_nyquist": {"default": 2},
     "dac_current": {},
-    # measured on the ZCU216 with this RFDC config: free-run DAC 224 / ADC 64. The target must sit
-    # in [measured, measured + 31] — xrfdc only ADDS delay, at most 31 steps (QubiC's 260/60 miss
-    # that window on both sides). 240/72 leave headroom both ways.
-    "mts": {"daclatency": 240, "adclatency": 72},
 }
+
+# TICS Pro register exports bundled with the driver (SPEAR's ZCU216 set, rfsoc_lib/xrfclk/ZCU216).
+CLOCK_DIR = Path(__file__).with_name("clocks") / "ZCU216"
+
+# RF clock plans keyed by the build's dsp_freq_hz — the twin of
+# vivado-scripts/riscvsoc-bd/inc/clock-plan.tcl (same names, same distributing tile).
+CLOCK_PLANS = {
+    # The RISC-Q reference: qcal-riscq's xrfclk LMK04828_500.25 (must be installed in the board's
+    # xrfclk package), LMX left at xrfclk's default; tile 2 distributes. Measured on the ZCU216 with
+    # this RFDC config: free-run DAC 224 / ADC 64. The target must sit in [measured, measured + 31]
+    # — xrfdc only ADDS delay, at most 31 steps (QubiC's 260/60 miss that window on both sides).
+    # 240/72 leave headroom both ways.
+    500e6: {"plan": "qubic", "lmk_freq": 500.25, "lmx_freq": None, "ref_tile": 2,
+            "mts": {"daclatency": 240, "adclatency": 72}},
+    # SPEAR's ZCU216 clocking, programmed from the bundled files the way SPEAR's rfsoc_lib/clocks.py
+    # does (raw TICS writes over xrfclk's SPI devices, nothing installed in the board's xrfclk):
+    # LMK 10 MHz in -> 250 MHz to the LMXs, PL_CLK 300 MHz, SYSREF 10 MHz; LMX 250 -> 300 MHz into
+    # tile 1, which distributes and is the MTS reference tile. MTS targets not yet measured: free
+    # sync only (latencies reported) until board.json pins them.
+    300e6: {"plan": "spear", "lmk_file": "LMK04828_10.0_250.0_300.0_10.0.txt",
+            "lmx_file": "LMX2594_250.0_300.0.txt", "ref_tile": 1,
+            "mts": {"daclatency": None, "adclatency": None}},
+}
+
+
+def clock_plan(dsp_freq_hz: float) -> dict:
+    """The RF clock plan for a build's dspClk frequency (a copy — callers overlay board.json)."""
+    for freq, plan in CLOCK_PLANS.items():
+        if abs(freq - dsp_freq_hz) < 1.0:
+            return {**plan, "mts": dict(plan["mts"])}
+    raise ValueError(f"no RF clock plan for dsp_freq_hz={dsp_freq_hz:g} "
+                     f"(known: {sorted(CLOCK_PLANS)})")
+
+
+def read_tics(path: Path) -> list[int]:
+    """Register words of a TICS Pro hex export (`Rn\t0xVVVVVV` per line), in file order."""
+    return [int(line.split("\t")[-1], 16) for line in Path(path).read_text().splitlines() if line.strip()]
+
 
 _refclks_done = False    # LMK/LMX setup runs once per server process, not per load
 
@@ -54,12 +88,19 @@ class PynqDriver:
         except RuntimeError:
             asyncio.set_event_loop(asyncio.new_event_loop())
 
-        cfg = {**BOARD_DEFAULTS, **(board or {})}
         self.params_text = Path(params_json).read_text()
+        dsp_freq_hz = float(json.loads(self.params_text)["dsp_freq_hz"])
+        cfg = {**BOARD_DEFAULTS, **clock_plan(dsp_freq_hz), **(board or {})}
+        self.cfg = cfg
+        self.ref_tile = int(cfg["ref_tile"])
+        log.info(f"RF clock plan {cfg['plan']} (dsp {dsp_freq_hz / 1e6:g} MHz, ref tile {self.ref_tile})")
 
         global _refclks_done
         if not _refclks_done:
-            self.refclks(cfg["lmk_freq"], cfg["lmx_freq"])
+            if cfg.get("lmk_file"):
+                self.program_clock_files(cfg["lmk_file"], cfg["lmx_file"])
+            else:
+                self.refclks(cfg["lmk_freq"], cfg["lmx_freq"])
             _refclks_done = True
         overlay_file = _overlay_file(xsa)
         log.info(f"loading overlay: {overlay_file}")
@@ -164,32 +205,60 @@ class PynqDriver:
             xrfclk.set_ref_clks(lmk_freq=lmk_freq, lmx_freq=lmx_freq)
         log.info(f"ref clocks: lmk={lmk_freq} lmx={lmx_freq}")
 
+    def program_clock_files(self, lmk_file: str, lmx_file: str) -> None:
+        """Program the LMK04828 and both LMX2594s from TICS register exports (bare names resolve in
+        CLOCK_DIR) — SPEAR's rfsoc_lib/clocks.py method: the raw writes xrfclk itself uses, so no
+        file has to be installed into the board's xrfclk package."""
+        lmk_path, lmx_path = (Path(f) if Path(f).is_absolute() else CLOCK_DIR / f
+                              for f in (lmk_file, lmx_file))
+        lmk_regs, lmx_regs = read_tics(lmk_path), read_tics(lmx_path)
+        if len(lmx_regs) != 113:
+            raise ValueError(f"{lmx_path.name}: an LMX2594 export has 113 registers, got {len(lmx_regs)}")
+        xc = xrfclk.xrfclk
+        if not xc.lmk_devices and not xc.lmx_devices:
+            xc._find_devices()
+        for dev in xc.lmk_devices:          # LMK first: it is the LMXs' reference
+            xc._write_LMK_regs(lmk_regs, dev)
+        for dev in xc.lmx_devices:
+            xc._write_LMX_regs(lmx_regs, dev)
+        log.info(f"ref clocks: {lmk_path.name} -> {len(xc.lmk_devices)} LMK, "
+                 f"{lmx_path.name} -> {len(xc.lmx_devices)} LMX")
+
     def config_mts(self, daclatency: int = -1, adclatency: int = -1) -> None:
         for mts_cfg in (self.rfdc.mts_dac_config, self.rfdc.mts_adc_config):
-            mts_cfg.RefTile = 2      # the references' choice — see xrfdc MTS restrictions
+            mts_cfg.RefTile = self.ref_tile   # the distributing tile (clock plan)
             mts_cfg.Tiles = 0xF      # bitmask: sync all 4 tiles
             mts_cfg.SysRef_Enable = 1
         self.rfdc.mts_dac_config.Target_Latency = daclatency
         self.rfdc.mts_adc_config.Target_Latency = adclatency
 
-    def mts(self, daclatency: int = 240, adclatency: int = 72) -> int:
+    def mts(self, daclatency: int | None = None, adclatency: int | None = None) -> int:
         """Two-pass MTS (QubiC): free sync to measure the latencies; if all tiles agree and are
         within target, re-sync pinned to the targets. 0 iff every measured latency == target.
+        A target of None takes the clock plan's (board.json "mts"); a plan with no measured targets
+        stops after the free sync and returns 0 iff all tiles of each kind agree.
         Raises (XRFdc_MultiConverter_Sync) if a tile never reaches the started state — run it by
         hand via drv.board.mts() to see the full converter error; __init__ guards the auto call
         so an MTS miss never aborts bring-up (MTS is re-pinned at bring-up)."""
+        plan = (getattr(self, "cfg", None) or {}).get("mts") or {}
+        daclatency = plan.get("daclatency") if daclatency is None else daclatency
+        adclatency = plan.get("adclatency") if adclatency is None else adclatency
         self.config_mts()
         self.rfdc.mts_dac()
         self.rfdc.mts_adc()
         dac_lat, adc_lat = self._mts_latencies()
-        log.debug(f"mts before: dac={dac_lat} adc={adc_lat}")
+        self.mts_latencies = {"dac": dac_lat, "adc": adc_lat}
+        log.info(f"mts free sync: dac={dac_lat} adc={adc_lat}")
+        if daclatency is None or adclatency is None:
+            return 0 if (len(set(dac_lat)) == 1 and len(set(adc_lat)) == 1) else 1
         if (all(l == dac_lat[0] for l in dac_lat) and dac_lat[0] <= daclatency
                 and all(l == adc_lat[0] for l in adc_lat) and adc_lat[0] <= adclatency):
             self.config_mts(daclatency, adclatency)
             self.rfdc.mts_dac()
             self.rfdc.mts_adc()
             dac_lat, adc_lat = self._mts_latencies()
-            log.debug(f"mts after: dac={dac_lat} adc={adc_lat}")
+            self.mts_latencies = {"dac": dac_lat, "adc": adc_lat}
+            log.info(f"mts pinned: dac={dac_lat} adc={adc_lat}")
         return 0 if (all(l == daclatency for l in dac_lat)
                      and all(l == adclatency for l in adc_lat)) else 1
 

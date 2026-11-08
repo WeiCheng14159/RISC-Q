@@ -30,7 +30,7 @@ class _BoardExtras:
     def info(self) -> dict:
         return self._proxy.info()
 
-    def mts(self, daclatency: int = 240, adclatency: int = 72) -> int:
+    def mts(self, daclatency: int | None = None, adclatency: int | None = None) -> int:
         return self._proxy.mts(daclatency, adclatency)
 
     def refclks(self, lmk_freq: float, lmx_freq: float | None = None) -> None:

@@ -19,6 +19,9 @@ if {[info exists ::env(RISCQ_RUN_SYNTH)]}     { set RUN_SYNTH     $::env(RISCQ_R
 if {[info exists ::env(RISCQ_RUN_IMPL)]}      { set RUN_IMPL      $::env(RISCQ_RUN_IMPL) }
 if {[info exists ::env(RISCQ_RUN_BITSTREAM)]} { set RUN_BITSTREAM $::env(RISCQ_RUN_BITSTREAM) }
 
+# RF clock plan (sample rates, reference, distributing tile) follows DSP_FREQ — inc/clock-plan.tcl.
+source [file join [file dirname [info script]] clock-plan.tcl]
+
 # Bitstream implies implementation.
 if {$RUN_BITSTREAM} { set RUN_IMPL 1 }
 

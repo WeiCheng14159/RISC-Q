@@ -19,3 +19,6 @@ riscq-board-server = "riscq.board.server:main"
 [tool.setuptools.packages.find]
 where = ["."]
 include = ["riscq*"]
+
+[tool.setuptools.package-data]
+"riscq.board" = ["clocks/*/*.txt"]

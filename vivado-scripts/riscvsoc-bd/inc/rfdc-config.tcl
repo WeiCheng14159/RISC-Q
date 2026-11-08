@@ -1,7 +1,8 @@
-# RF Data Converter configuration — verbatim from the RISC-Q reference (utils/rfdc.tcl): all four DAC
-# and ADC tiles enabled, DACs at 8 GSPS (×1 interpolation, 16 samples/AXIS word = 256 bit), ADCs at
-# 2 GSPS (×1 decimation, 4 samples/AXIS word = 64 bit), coarse mixers, multi-tile sync.
-set_property -dict {
+# RF Data Converter configuration — from the RISC-Q reference (utils/rfdc.tcl): all four DAC and ADC
+# tiles enabled, ×1 interpolation / decimation, 16 DAC samples/AXIS word (256 bit) and 4 ADC samples/AXIS
+# word (64 bit), coarse mixers, multi-tile sync. The block below is the reference verbatim (DACs 8 GSPS,
+# ADCs 2 GSPS); the clock-tree keys are then rewritten from the RF clock plan (inc/clock-plan.tcl).
+set RFDC_PROPS {
 CONFIG.ADC0_Clock_Dist {0}
 CONFIG.ADC0_Clock_Source {2}
 CONFIG.ADC0_Enable {1}
@@ -282,4 +283,21 @@ CONFIG.DAC_Mixer_Type33 {1}
 CONFIG.DAC_Mode33 {3}
 CONFIG.DAC_Nyquist33 {0}
 CONFIG.DAC_Slice33_Enable {true}
-} $RFDC_TARGET
+}
+
+# Clock tree from the RF clock plan (clock-plan.tcl). Sample rates follow dspClk (16 DAC / 4 ADC samples
+# per cycle). Tile $RF_CLK_TILE takes the CLK104 reference into its PLL and distributes the PLL output
+# (Clock_Dist 2); the other three tiles run PLL-less on that distributed sample clock. Clock_Source
+# codes: ADC tile t = t, DAC tile t = t + 4. The qubic plan reproduces the verbatim values above.
+foreach {kind fs_mhz outdiv srcbase} [list DAC $DAC_FS_MHZ 16 4 ADC $ADC_FS_MHZ 8 0] {
+  for {set t 0} {$t < 4} {incr t} {
+    set src [expr {$t == $RF_CLK_TILE}]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_Clock_Source [expr {$srcbase + $RF_CLK_TILE}]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_Clock_Dist   [expr {$src ? 2 : 0}]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_PLL_Enable   [expr {$src ? "true" : "false"}]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_Refclk_Freq  [format %.3f [expr {$src ? $RF_REFCLK_MHZ : $fs_mhz}]]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_Sampling_Rate [format %.3f [expr {$fs_mhz / 1000.0}]]
+    dict set RFDC_PROPS CONFIG.${kind}${t}_Outclk_Freq  [format %.3f [expr {$fs_mhz / $outdiv}]]
+  }
+}
+set_property -dict $RFDC_PROPS $RFDC_TARGET

@@ -54,7 +54,7 @@ case class RiscqZcu216SocPorts(
  */
 abstract class Zcu216Top(
     dacNum: Int = 16, adcNum: Int = 16, dacBatch: Int = 16, adcBatch: Int = 16, dataWidth: Int = 16,
-    vivado: Boolean = false, dio: Seq[String] = Nil
+    vivado: Boolean = false, dio: Seq[String] = Nil, dspFreqHz: Double = 500e6
 ) extends Component {
   val io = RiscqZcu216SocPorts(dacNum, adcNum, dacBatch, adcBatch, dataWidth, vivado, dio)
 
@@ -69,6 +69,6 @@ abstract class Zcu216Top(
   if (vivado) {
     hostCd.renamePulledWires("hostClk", "hostRst")
     VivadoClkHelper.addInference(hostCd.readClockWire, hostCd.readResetWire, 100000000L)
-    VivadoClkHelper.addInference(dspCd.readClockWire, io.dspRst, 500000000L)
+    VivadoClkHelper.addInference(dspCd.readClockWire, io.dspRst, scala.math.round(dspFreqHz))
   }
 }

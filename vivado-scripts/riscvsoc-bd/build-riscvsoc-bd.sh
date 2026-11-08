@@ -62,6 +62,11 @@ fi
 #    just enables the pre-place hook (any value); RISCQ_PBLOCK_TCL is the actual floorplan file.
 export RISCQ_PROJ_NAME="$PROJ"
 export RISCQ_BUILD_DIR="$BUILD"
+# The dsp clock comes from the config (dsp_freq_hz); it also picks the RF clock plan (inc/clock-plan.tcl).
+if [ -z "${RISCQ_DSP_FREQ:-}" ]; then
+  RISCQ_DSP_FREQ="$(python3 -c 'import json,sys; print(int(float(json.load(open(sys.argv[1]))["dsp_freq_hz"])))' "$CONFIG")"
+fi
+export RISCQ_DSP_FREQ
 export RISCQ_PBLOCK=1
 export RISCQ_PBLOCK_TCL="$BD_DIR/pblocks-bd.tcl"
 export RISCQ_IP_RETIMING=1

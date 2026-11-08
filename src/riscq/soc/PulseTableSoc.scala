@@ -61,7 +61,7 @@ class PulseTableSoc(
     // host window: the PS physical address width.
     val hostMemAddrWidth: Int = 40,
 ) extends Zcu216Top(dacNum = spec.dacNum, adcNum = spec.adcNum, dacBatch = 16, adcBatch = 4, dataWidth = 16, vivado = vivado,
-                    dio = PulseTableSoc.dioNames(spec)) {
+                    dio = PulseTableSoc.dioNames(spec), dspFreqHz = spec.dspFreqHz) {
   // Every per-SoC parameter comes from the spec (docs/soc/SocSpec.md): the cores' channel lists,
   // converter ids and memory sizes from their CoreSpecs; the link depth, host-window width, readout
   // trace depth and the RFDC-edge ADC pipe from the SoC fields.

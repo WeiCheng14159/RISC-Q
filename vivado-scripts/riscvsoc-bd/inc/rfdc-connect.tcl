@@ -15,13 +15,13 @@ for {set t 0} {$t < 4} {incr t} {
   }
 }
 
-# sysref + per-tile sample clocks (dac2_clk / adc2_clk are the distributing tiles, CONFIG.*_Clock_Dist 2)
+# sysref + the reference clock into the distributing tile (RF_CLK_TILE, clock-plan.tcl; CONFIG.*_Clock_Dist 2)
 create_bd_intf_port -mode Slave -vlnv xilinx.com:display_usp_rf_data_converter:diff_pins_rtl:1.0 sysref_in
 create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 dac_clk
 create_bd_intf_port -mode Slave -vlnv xilinx.com:interface:diff_clock_rtl:1.0 adc_clk
 connect_bd_intf_net [get_bd_intf_ports sysref_in] [get_bd_intf_pins rf_data_converter/sysref_in]
-connect_bd_intf_net [get_bd_intf_ports dac_clk]   [get_bd_intf_pins rf_data_converter/dac2_clk]
-connect_bd_intf_net [get_bd_intf_ports adc_clk]   [get_bd_intf_pins rf_data_converter/adc2_clk]
+connect_bd_intf_net [get_bd_intf_ports dac_clk]   [get_bd_intf_pins rf_data_converter/dac${RF_CLK_TILE}_clk]
+connect_bd_intf_net [get_bd_intf_ports adc_clk]   [get_bd_intf_pins rf_data_converter/adc${RF_CLK_TILE}_clk]
 
 # AXIS clocks (dspClk) and AXIS resets (dsp domain, active-low) over all four DAC + four ADC tiles
 set axis_aclks   {}

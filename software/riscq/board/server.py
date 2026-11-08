@@ -103,6 +103,8 @@ class BoardServer:
             riscq_version = "unknown"
         return {"bundle": self._bundle, "xsa_sha": self._xsa_sha,
                 "mts_result": getattr(self._drv, "mts_result", None),
+                "mts_latencies": getattr(self._drv, "mts_latencies", None),
+                "clock_plan": (getattr(self._drv, "cfg", None) or {}).get("plan"),
                 "versions": {"python": sys.version.split()[0], "riscq": riscq_version}}
 
     # ── server-side batch runner: the SAME riscq.run functions next to the MMIO window, one RPC
@@ -138,8 +140,10 @@ class BoardServer:
     # ── board ops: thin delegates ──
 
     @_locked
-    def mts(self, daclatency=240, adclatency=72):
-        return self._driver().mts(daclatency=int(daclatency), adclatency=int(adclatency))
+    def mts(self, daclatency=None, adclatency=None):
+        # None = the bundle's clock-plan / board.json targets
+        as_int = lambda v: None if v is None else int(v)
+        return self._driver().mts(daclatency=as_int(daclatency), adclatency=as_int(adclatency))
 
     @_locked
     def refclks(self, lmk_freq, lmx_freq=None):

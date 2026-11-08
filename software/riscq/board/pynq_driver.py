@@ -46,8 +46,8 @@ CLOCK_PLANS = {
     # SPEAR's ZCU216 clocking, programmed from the bundled files the way SPEAR's rfsoc_lib/clocks.py
     # does (raw TICS writes over xrfclk's SPI devices, nothing installed in the board's xrfclk):
     # LMK 10 MHz in -> 250 MHz to the LMXs, PL_CLK 300 MHz, SYSREF 10 MHz; LMX 250 -> 300 MHz into
-    # tile 1, which distributes and is the MTS reference tile. MTS targets not yet measured: free
-    # sync only (latencies reported) until board.json pins them.
+    # tile 1, which distributes and is the MTS reference tile. Free sync only (latencies reported)
+    # until board.json pins targets; zcu216-0 measured DAC 224 / ADC 60 on 2026-11-07.
     300e6: {"plan": "spear", "lmk_file": "LMK04828_10.0_250.0_300.0_10.0.txt",
             "lmx_file": "LMX2594_250.0_300.0.txt", "ref_tile": 1,
             "mts": {"daclatency": None, "adclatency": None}},
@@ -104,7 +104,11 @@ class PynqDriver:
             _refclks_done = True
         overlay_file = _overlay_file(xsa)
         log.info(f"loading overlay: {overlay_file}")
-        self.overlay = pynq.Overlay(overlay_file, download=download)
+        # ignore_version: PYNQ 2.7's xrfdc binds only usp_rf_data_converter 2.3/2.4, and a Vivado
+        # 2023.1 build emits 2.6 — without it the RFDC comes up as DefaultIP (no mts_*/tiles). The
+        # register map the driver uses is unchanged across these versions; SPEAR's ZCU216 overlays
+        # (rfsoc_lib/rfsoc_overlay.py) load the same way on zcu216-0.
+        self.overlay = pynq.Overlay(overlay_file, download=download, ignore_version=True)
         self.rfdc = self.overlay.rf_data_converter
         self.mmio = pynq.MMIO(AXI_BASE, AXI_SIZE)
 

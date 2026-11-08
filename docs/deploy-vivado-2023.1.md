@@ -117,7 +117,7 @@ table exists twice and the two copies must agree:
 | Plan | `dsp_freq_hz` | DAC / ADC | Reference into | Clock files | MTS targets |
 |---|---|---|---|---|---|
 | `qubic` (RISC-Q reference) | 500 MHz | 8 / 2 GS/s | tile 2 (DAC 230 / ADC 226), 500 MHz | xrfclk `LMK04828_500.25` (from qcal-riscq, not on zcu216-0) | 240 / 72 |
-| `spear` | 300 MHz | 4.8 / 1.2 GS/s | tile 1 (DAC 229 / ADC 225), 300 MHz | SPEAR `LMK04828_10.0_250.0_300.0_10.0` + `LMX2594_250.0_300.0`, bundled in `software/riscq/board/clocks/ZCU216/` | not measured yet (free sync) |
+| `spear` | 300 MHz | 4.8 / 1.2 GS/s | tile 1 (DAC 229 / ADC 225), 300 MHz | SPEAR `LMK04828_10.0_250.0_300.0_10.0` + `LMX2594_250.0_300.0`, bundled in `software/riscq/board/clocks/ZCU216/` | free sync only; measured 224 / 60 on zcu216-0 |
 
 The `spear` plan reuses SPEAR's proven zcu216-0 assets unchanged:
 
@@ -158,24 +158,46 @@ small margin.
 ### PYNQ 2.7 boards (e.g. zcu216-0)
 
 zcu216-0 runs the PYNQ 2.7 image (Python 3.8.2, 128 MB CMA). Four things differ from what the
-software was written against:
+software was written against (five, counting the RFDC driver version):
 
 | Issue | What to do |
 |---|---|
 | **CMA is 128 MB.** The default 14-qubit build needs 14 × 16 MB = 224 MB for the host window, and `hostwin_bits` is baked into the RTL. | Build `software/configs/zcu216-14q-hw23.json` (`hostwin_bits: 23`, 8 MB per core = 112 MB): `RISCQ_CONFIG=software/configs/zcu216-14q-hw23.json RISCQ_PROJ_NAME=zcu216-14q-hw23 ...build-riscvsoc-bd.sh` |
 | **PYNQ 2.7 cannot load an `.xsa`**; `pynq.Overlay` wants a `.bit` with a same-named `.hwh`. | `PynqDriver` now falls back to `top.bit` + `top.hwh` beside `top.xsa` on PYNQ < 3. Put all three (and `params.json`) in the bundle directory. |
 | **Python 3.8**, while `pyproject.toml` says `>=3.10`. Every board-side module (`riscq`, `map`, `spec`, `build`, `run`, `driver`, `driver.remote`, `board`, `board.server`, `board.pynq_driver`) imports fine on 3.8. | Run from source instead of installing the wheel: `PYTHONPATH=<repo>/software:pyro5-*.whl:serpent-*.whl`, in a login shell (`bash -l`) so PYNQ's profile sets `BOARD=ZCU216`, which `xrfclk` needs at import. |
+| **PYNQ 2.7's `xrfdc` binds only `usp_rf_data_converter` 2.3/2.4**; Vivado 2023.1 emits 2.6, so the RFDC loads as `DefaultIP` (no `mts_dac_config`, no tiles) and `load()` fails in MTS. | `PynqDriver` opens the overlay with `ignore_version=True`, as SPEAR's `rfsoc_overlay.py` does on this board. |
 | **No 500.25 MHz LMK04828 register file.** The stock `xrfclk` has only LMK04828 245.76 MHz (plus LMK04832/LMK04208 122.88 MHz and a few LMX2594 files). The `qubic` plan calls `xrfclk.set_ref_clks(lmk_freq=500.25)`, inherited from qcal-riscq. | Use the `spear` plan (`zcu216-14q-spear.json`), which programs its own bundled clock files. The `qubic` plan still needs qcal-riscq's file installed into the board's `xrfclk` directory. |
 
 SPEAR's own zcu216-0 notes (`hw_design/ZCU216/CLAUDE.md` in SPEAR-riscv) flag two board
-issues to check at the first bring-up, before trusting any data:
+issues: the ADC-side reference clock delivering no usable clock (2026-09-01: ADC tile PLLs
+unlocked, a 48-sample ring on every ADC channel), and `mts_dac()` raising "Alignment correction
+delay 31 required exceeds maximum (31)". Neither shows up under the `spear` plan here; see the
+bring-up results below. Keep checking `info()["rf_status"]` before trusting data.
 
-- **ADC reference clock.** As of 2026-09-01 the ADC-side LMX2594 / `ADC_225_CLK` path delivered
-  no usable clock: all four ADC tile PLLs read unlocked while the DAC tiles locked. Check the ADC
-  tile PLL lock before trusting readout.
-- **DAC MTS.** `mts_dac()` raised "Alignment correction delay 31 required exceeds maximum (31)"
-  under SPEAR's sync sequence. The `spear` plan only runs a free sync and reports
-  `mts_latencies` in `info()`.
+### zcu216-0 bring-up results (2026-11-07, `zcu216-14q-spear`)
+
+Build: Vivado 2023.1, timing met on every clock (`dspClk` 300 MHz WNS +0.261 ns, WHS +0.009 ns;
+`hostClk` +2.279 ns; `clk_pl_0` +2.899 ns), no incremental pass needed. Loaded with
+`deploy/start-board-server.sh --bundle zcu216-14q-spear`; tested from the host over `RemoteDriver`.
+
+| Check | Expected | Measured |
+|---|---|---|
+| RFDC tiles (`rf_status`) | all 8 tiles running, tile-1 PLLs locked | DAC and ADC tiles 0–3 `TileState` 15; DAC/ADC tile 1 PLL locked (`PLLLockStatus` 2, `ClockSource` 1); other tiles on the distributed clock |
+| MTS free sync | all tiles of a kind agree | `mts_result` 0; DAC latency 224 ×4, ADC 60 ×4 |
+| `dspClk` (core spins writing `now()`, host samples 4 s apart) | 300 MHz | 299.98 MHz (±0.05 % RPC jitter) |
+| Host window (DMA into PS DDR4) | window array = RAM array | equal |
+| Core multiply (`with_mul`) | int32 products | bit-exact over 32 values |
+| 14 cores at once, pulse trains | every core done; spacing = `dur + gap + loop body` | all 14 done; loop body 233 batches on the first iteration(s), then 224 — `[241, 232, 232, …]` for gap 8, identical to the `sim-2q` co-sim |
+| Loopback DAC 0 (`vout00`) → ADC 0 (`vin00`), `robs`, 250 MHz tone | alias 250 MHz, 600 ns FWHM (667 ns pulse with 10 % cosine edges) | 249.98 MHz, 598 ns, SNR 42 dB, peak code 6100 |
+| Same at 3.25 GHz (2nd DAC Nyquist zone) | alias 4.8 − 3.25 = 1.55 GHz → 350 MHz | 350.02 MHz, 598 ns, SNR 45 dB, peak code 8488 |
+| ADC noise floor, TX off | no 48-sample ring | autocorrelation peak ≤ 0.11 (SPEAR saw 0.81 at lag 48) |
+
+The tone appears ≈ 200 ns after the gate fires (DAC → cable → ADC → `robs`, at the 50 % point).
+The largest spurs are the RF-ADC interleaving images at fs/4 ± f_in (−38 dBc for 250 MHz). The
+first loop iteration's extra 9 batches come from the core warming up (the branch predictor is not
+cleared by reset), not from the pulse hardware. The co-sim reproduces it to the batch. MTS targets
+are still unpinned: pin `{"daclatency": 224 + k, "adclatency": 60 + k}` in `board.json` once a
+deterministic latency across reloads is needed.
 
 ### Generic flow
 

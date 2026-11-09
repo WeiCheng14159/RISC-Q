@@ -224,6 +224,40 @@ unlocked, a 48-sample ring on every ADC channel), and `mts_dac()` raising "Align
 delay 31 required exceeds maximum (31)". Neither showed up under the 300 MHz SPEAR plan; see the
 bring-up results below. Recheck both under the native plan. Keep checking `info()["rf_status"]` before trusting data.
 
+### zcu216-0 14-qubit native build (2026-11-09, `zcu216-14q-lp6`)
+
+**Timing.** 14 cores at 500 MHz on Vivado 2023.1, closed in four steps:
+
+| Step | `dspClk` WNS | TNS | Failing endpoints |
+|---|---|---|---|
+| `zcu216-14q-hw23`, flow as-is | −0.208 ns | −79 ns | 2045 |
+| + `adc_pipe` 5, phys_opt `AggressiveExplore` (`RISCQ_PHYSOPT_DIRECTIVE`) | −0.066 ns | −32 ns | 1404 |
+| `zcu216-14q-lp6`: + `link_pipe` 6 | −0.046 ns | −9.5 ns | 609 |
+| + incremental TimingClosure (`close-incremental.sh`) | −0.024 ns | −0.54 ns | 103 |
+| + a second incremental pass seeded from the first (`RISCQ_INCR_SEED`), with post-route `AggressiveFanoutOpt AlternateReplication` (`RISCQ_INCR_POSTROUTE`) | **0.000 ns** | 0 | 0 |
+
+Final result: "All user specified timing constraints are met". WHS is +0.003 ns, `hostClk` +2.446 ns,
+`clk_pl_0` +2.526 ns. The bitstream is written from `routed_incr2.dcp`, and the XSA carries the same
+bitstream.
+
+The misses were spread thinly:
+- the ADC 4 pipe (RF-ADC tile 1 to cores 7–13, every 0-logic hop of the 3-stage pipe);
+- the core-to-datapath links;
+- core-internal paths (execute ALU, PC / fetch clock enables, jump broadcast).
+
+On 2026.1 the same design reached −0.015 ns in one pass.
+
+**On the board** (after a fresh boot; this test needs 112 MB of CMA, so restart the server rather than
+kill it, and reboot if `CmaFree` stays low after a crash):
+
+| Check | Measured |
+|---|---|
+| RFDC | all 8 tiles running, tile-1 PLLs locked, MTS 0 (DAC 224 / ADC 64) |
+| `dspClk` | **499.994 MHz** (31 samples over 61 s, residual 1.6 ms) |
+| Host window, core multiply | exact |
+| 14 cores, pulse trains | all done; the same loop body on every core (+9 batches vs the 2-core build: longer links) |
+| Loopback 250 MHz / 3.25 GHz | 250.00 MHz (SNR 28 dB) / alias 750.00 MHz (SNR 40 dB); burst 717–719 ns (expected 720); starts 187 ns after the gate (+7 ns: two more ADC pipe stages) |
+
 ### zcu216-0 native-plan results (2026-11-08, `zcu216-2q`)
 
 The opentics clock files were checked on hardware before the 14-qubit native build finished, with a 2-core

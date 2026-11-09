@@ -14,5 +14,6 @@
     "hostwin_bits": 23,
     "queue_depth": 4,
     "with_mul": true,
-    "dsp_freq_hz": 500000000.0
+    "dsp_freq_hz": 500000000.0,
+    "adc_pipe": 5
 }

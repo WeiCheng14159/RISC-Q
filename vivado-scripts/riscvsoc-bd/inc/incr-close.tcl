@@ -11,12 +11,18 @@
 #
 # Inputs (env): RISCQ_BUILD_DIR — the finished build dir (its <proj>.runs/impl_1/*_opt.dcp and
 #               *_routed.dcp are the seeds); RISCQ_PBLOCK_TCL — the floorplan (pblocks-bd.tcl).
+#               Optional: RISCQ_INCR_SEED — a routed checkpoint to use as the reference instead (e.g. a
+#               previous pass's routed_incr.dcp, to chain passes); RISCQ_INCR_TAG — output suffix
+#               (timing_incr<tag>.rpt / routed_incr<tag>.dcp); RISCQ_INCR_POSTROUTE — extra post-route
+#               phys_opt directives run after AggressiveExplore (e.g. "AggressiveFanoutOpt").
 # Outputs: $RISCQ_BUILD_DIR/timing_incr.rpt (the headline), routed_incr.dcp (the closed design —
 #          write_bitstream from it if it is the one to ship).
 set BUILD_DIR $::env(RISCQ_BUILD_DIR)
 set PBLOCKS   $::env(RISCQ_PBLOCK_TCL)
+set TAG       [expr {[info exists ::env(RISCQ_INCR_TAG)] ? $::env(RISCQ_INCR_TAG) : ""}]
 set opt    [lindex [glob $BUILD_DIR/*.runs/impl_1/*_opt.dcp] 0]
 set routed [lindex [glob $BUILD_DIR/*.runs/impl_1/*_routed.dcp] 0]
+if {[info exists ::env(RISCQ_INCR_SEED)]} { set routed $::env(RISCQ_INCR_SEED) }
 puts "\[incr-close\] seed: $routed"
 
 open_checkpoint $opt
@@ -26,6 +32,9 @@ place_design
 phys_opt_design
 route_design
 phys_opt_design -directive AggressiveExplore
-report_timing_summary -max_paths 20 -file $BUILD_DIR/timing_incr.rpt
-write_checkpoint -force $BUILD_DIR/routed_incr.dcp
-puts "\[incr-close\] done: $BUILD_DIR/timing_incr.rpt, routed_incr.dcp"
+if {[info exists ::env(RISCQ_INCR_POSTROUTE)]} {
+  foreach d $::env(RISCQ_INCR_POSTROUTE) { phys_opt_design -directive $d }
+}
+report_timing_summary -max_paths 20 -file $BUILD_DIR/timing_incr${TAG}.rpt
+write_checkpoint -force $BUILD_DIR/routed_incr${TAG}.dcp
+puts "\[incr-close\] done: $BUILD_DIR/timing_incr${TAG}.rpt, routed_incr${TAG}.dcp"

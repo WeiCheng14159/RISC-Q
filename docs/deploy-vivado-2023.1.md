@@ -247,6 +247,29 @@ The misses were spread thinly:
 
 On 2026.1 the same design reached −0.015 ns in one pass.
 
+Notes on the board results:
+
+- **Pulse-train warm-up.** The first run after a different program can keep the extra 9 batches for
+  several iterations: the GShare predictor is not cleared by reset, so it carries the previous program's
+  history. Co-sim (power-up predictor) shows them on the first iteration only. After one run of the same
+  program, board and co-sim agree exactly. An earlier note here put the extra 9 batches down to the longer
+  links; that was wrong.
+- **DAC Nyquist zone and low tones.** The low 250 MHz loopback level (peak 1224, SNR 28 dB) comes from
+  DAC 0's Nyquist zone 2 (mix-mode, the `dac_nyquist` default), which suppresses low frequencies.
+  Measured on DAC 0:
+
+  | zone | 250 MHz on-rms / SNR | 3.25 GHz on-rms / SNR |
+  |---|---|---|
+  | 2 (default) | 817 / 28.5 dB | 2927 / 39.1 dB |
+  | 1 | 5185 / 44.3 dB | 3404 / 40.4 dB |
+
+  Zone 1 recovers 16 dB at 250 MHz. An ideal mix-mode model predicts about 26 dB, so the DAC's zone-2
+  response is not fully characterized. Keep zone 2 for drives above fs/2 (qubits at 4–8 GHz); set
+  `board.json` `dac_nyquist` to zone 1 for converters driving below about 2 GHz.
+- **Noise floor.** The noise floor is ~32 codes rms on the 14q build vs ~24 on the 2-core build: `robs`
+  sums the mapped ADCs, and the 14q build maps two (ADC 0 for cores 0–6, ADC 4 for cores 7–13), ADC 4
+  uncabled. Expect a factor of about √2.
+
 **On the board** (after a fresh boot; this test needs 112 MB of CMA, so restart the server rather than
 kill it, and reboot if `CmaFree` stays low after a crash):
 
@@ -255,8 +278,8 @@ kill it, and reboot if `CmaFree` stays low after a crash):
 | RFDC | all 8 tiles running, tile-1 PLLs locked, MTS 0 (DAC 224 / ADC 64) |
 | `dspClk` | **499.994 MHz** (31 samples over 61 s, residual 1.6 ms) |
 | Host window, core multiply | exact |
-| 14 cores, pulse trains | all done; the same loop body on every core (+9 batches vs the 2-core build: longer links) |
-| Loopback 250 MHz / 3.25 GHz | 250.00 MHz (SNR 28 dB) / alias 750.00 MHz (SNR 40 dB); burst 717–719 ns (expected 720); starts 187 ns after the gate (+7 ns: two more ADC pipe stages) |
+| 14 cores, pulse trains | all done; **identical to the batch with co-sim of the same config** (all 14 cores, reps 1–2 and core 0 alone): first interval +9 (predictor warm-up), then dur + gap + 224, the same loop body as the 2-core and 300 MHz builds |
+| Loopback 250 MHz / 3.25 GHz | 250.00 MHz (SNR 28 dB) / alias 750.00 MHz (SNR 40 dB); burst 717–719 ns (expected 720); starts 187 ns after the gate (+7 ns; the two extra ADC pipe stages account for 4) |
 
 ### zcu216-0 native-plan results (2026-11-08, `zcu216-2q`)
 

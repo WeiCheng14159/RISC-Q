@@ -1,0 +1,25 @@
+{
+    "name": "zcu216-ion",
+    "dsp_freq_hz": 500000000.0,
+    "dac_num": 16,
+    "adc_num": 16,
+    "link_pipe": 4,
+    "hostwin_bits": 23,
+    "rob_depth": 1024,
+    "adc_pipe": 5,
+    "core_defaults": {"mem_depth": 16384, "with_mul": true, "queue_depth": 4},
+    "cores": [
+        {"name": "ion", "role": "qubit", "channels": [
+            {"name": "u1c1", "kind": "pulse", "dac": 0, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32, "trace": true},
+            {"name": "u1c2", "kind": "pulse", "dac": 1, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u0c2", "kind": "pulse", "dac": 2, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u1c0", "kind": "pulse", "dac": 3, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u1c3", "kind": "pulse", "dac": 4, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u0c0", "kind": "pulse", "dac": 5, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u0c1", "kind": "pulse", "dac": 6, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "u0c3", "kind": "pulse", "dac": 7, "slots": 4, "env_depth": 1024, "interp": 16, "freq_bits": 32},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4},
+            {"name": "ttl", "kind": "dio", "slots": 8, "env_depth": 0, "interp": 1, "count_mask": 65280}
+        ]}
+    ]
+}

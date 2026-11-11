@@ -288,7 +288,9 @@ class PulseTableSoc(
     }
 
     // ── readout trace into robs on any traced (readout-drive) pulse fire ──
-    val anyPulseValid = riscqCores.flatMap(_.tracePulses.map(_.valid)).reduceBalancedTree(_ | _, (s, _) => RegNext(s))
+    val traceValids   = riscqCores.flatMap(_.tracePulses.map(_.valid))
+    val anyPulseValid = if (traceValids.isEmpty) False                          // a build with no traced channel
+                        else traceValids.reduceBalancedTree(_ | _, (s, _) => RegNext(s))
     val fire   = RegNext(anyPulseValid)
     val rbAddr = Reg(UInt(log2Up(robDepth) bits))
     when(fire)(rbAddr := rbAddr + 1).otherwise(rbAddr := 0)

@@ -98,6 +98,30 @@ assign_bd_address -target_address_space [get_bd_addr_spaces $TOP/M_AXI_HOST] \
 assign_bd_address -target_address_space [get_bd_addr_spaces $TOP/M_AXI_HOST] \
   [get_bd_addr_segs zynq_ps/SAXIGP2/HP0_DDR_HIGH] -force
 
+# ---- Timed-DIO (TTL) bank -> the ZCU216 PMOD headers (builds with a `dio` channel: the IP then has
+# io_dio_<core>_<ch>_out/_in): bank OUTPUT lines 0..7 drive PMOD0 0..7, PMOD1 0..7 drive bank INPUT lines
+# 8..15 (the gated PMT counters sit on 8/9 — their gates are the internal output bits 8/9). Output lines
+# 8..15 (the gates) and input lines 0..7 stay internal; constraints-zcu216-pmod.xdc places the pins. ----
+set _dio_out [get_bd_pins -quiet $TOP/io_dio_*_out]
+if {[llength $_dio_out]} {
+  if {$BOARD ne "ZCU216"} { error "bd-build: a dio bank is wired to the ZCU216 PMODs only (board $BOARD)" }
+  if {[llength $_dio_out] != 1} { error "bd-build: one dio bank fits PMOD0/1, the IP has [llength $_dio_out]" }
+  set _dio_in [get_bd_pins $TOP/[string range [get_property NAME $_dio_out] 0 end-4]_in]
+  set _sl [create_bd_cell -type ip -vlnv xilinx.com:ip:xlslice:1.0 dio_out_lo]
+  set_property -dict [list CONFIG.DIN_WIDTH 16 CONFIG.DIN_FROM 7 CONFIG.DIN_TO 0] $_sl
+  connect_bd_net $_dio_out [get_bd_pins $_sl/Din]
+  create_bd_port -dir O -from 7 -to 0 pmod0
+  connect_bd_net [get_bd_pins $_sl/Dout] [get_bd_ports pmod0]
+  set _z [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconstant:1.1 dio_in_lo]
+  set_property -dict [list CONFIG.CONST_WIDTH 8 CONFIG.CONST_VAL 0] $_z
+  set _cc [create_bd_cell -type ip -vlnv xilinx.com:ip:xlconcat:2.1 dio_in_cat]
+  set_property -dict [list CONFIG.NUM_PORTS 2 CONFIG.IN0_WIDTH 8 CONFIG.IN1_WIDTH 8] $_cc
+  create_bd_port -dir I -from 7 -to 0 pmod1
+  connect_bd_net [get_bd_pins $_z/dout] [get_bd_pins $_cc/In0]
+  connect_bd_net [get_bd_ports pmod1] [get_bd_pins $_cc/In1]
+  connect_bd_net [get_bd_pins $_cc/dout] $_dio_in
+}
+
 # ---- White Rabbit GTY pins (with_white_rabbit builds only — the IP then has wr* pins): the GT
 # refclk + serial lanes go straight out as BD ports; constraints-wr.xdc places them (SFP0/X0Y4).
 # wrMarker (the digital marker pin) stays unconnected — the marker rides a spare DAC instead. ----

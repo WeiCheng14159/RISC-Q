@@ -114,29 +114,41 @@ case class TimedDio(
   val gatePrev = RegNext(gate) init 0
   val closing  = gatePrev & ~gate                                             // gate fell (lagged) this cycle
   val closeTime = buf.io.time - gateLag                                       // = the gate's timeline close
-  val counts   = Vec.fill(lines)(Reg(UInt(16 bits)) init 0)
-  val doneCnt  = Vec.fill(lines)(Reg(UInt(16 bits)) init 0)
-  val doneTime = Vec.fill(lines)(Reg(UInt(timeWidth bits)) init 0)
-  val pending  = Reg(Bits(lines bits)) init 0
-  val sendCnt  = Bool()
-  val sendSel  = UInt(log2Up(lines) bits)
-  for (j <- 0 until lines if ((countMask >> j) & 1) == 1) {
-    when(closing(j)) {
-      doneCnt(j)  := counts(j)                                                // the count up to the close
-      doneTime(j) := closeTime
-      counts(j)   := 0
-    }.elsewhen(gate(j) && rising(j) && counts(j) =/= 0xFFFF) {
-      counts(j) := counts(j) + 1
+  // registers only for the counted lines (cl): index c ↔ line cl(c)
+  val cl = (0 until lines).filter(j => ((countMask >> j) & 1) == 1)
+  val nC = cl.size
+  val noChange = changed === 0
+  if (nC == 0) {
+    io.event.valid   := !noChange
+    io.event.payload := changed ## inReg
+    io.eventTime     := sampleTime
+  } else {
+    val counts   = Vec.fill(nC)(Reg(UInt(16 bits)) init 0)
+    val doneCnt  = Vec.fill(nC)(Reg(UInt(16 bits)) init 0)
+    val doneTime = Vec.fill(nC)(Reg(UInt(timeWidth bits)) init 0)
+    val pending  = Reg(Bits(nC bits)) init 0
+    val closingC = Cat(cl.map(j => closing(j)))                               // Cat: first = LSB
+    for ((j, c) <- cl.zipWithIndex) {
+      when(closing(j)) {
+        doneCnt(c)  := counts(c)                                              // the count up to the close
+        doneTime(c) := closeTime
+        counts(c)   := 0
+      }.elsewhen(gate(j) && rising(j) && counts(c) =/= 0xFFFF) {
+        counts(c) := counts(c) + 1
+      }
     }
+    // the lowest pending count goes out on a cycle with no change event
+    val selOh   = OHMasking.first(pending)
+    val sel     = OHToUInt(selOh)
+    val sendCnt = pending.orR && noChange
+    pending := (pending & ~Mux(sendCnt, selOh, B(0, nC bits))) | closingC
+    val lineOh  = Bits(lines bits)                                            // the counted line, one-hot
+    lineOh := 0
+    for ((j, c) <- cl.zipWithIndex) when(selOh(c))(lineOh(j) := True)
+    io.event.valid   := !noChange || sendCnt
+    io.event.payload := Mux(noChange, lineOh ## doneCnt(sel).asBits, changed ## inReg)
+    io.eventTime     := Mux(noChange, doneTime(sel), sampleTime)
   }
-  // the lowest pending count goes out on a cycle with no change event
-  sendSel := OHToUInt(OHMasking.first(pending))
-  sendCnt := pending.orR && changed === 0
-  pending := (pending & ~Mux(sendCnt, UIntToOh(sendSel, lines), B(0, lines bits))) | closing
-
-  io.event.valid   := changed =/= 0 || sendCnt
-  io.event.payload := Mux(changed =/= 0, changed ## inReg, UIntToOh(sendSel, lines) ## doneCnt(sendSel).asBits)
-  io.eventTime     := Mux(changed =/= 0, sampleTime, doneTime(sendSel))
   io.time          := buf.io.time
   override def event: Option[EventSource] = Some(EventSource(EventLink.fifoKind, io.event, Some(io.eventTime)))
 }

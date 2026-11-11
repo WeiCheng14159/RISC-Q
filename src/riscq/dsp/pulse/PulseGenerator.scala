@@ -35,8 +35,12 @@ case class PulseGeneratorParams(
                                  // io.pulse.im = 0 so synthesis prunes each envelope ComplexMul's
                                  // imag-output multiply (3→2 DSP/lane) — even inside a KEEP_HIERARCHY
                                  // fence, since the dead output is then intra-block.
-    freqWidth: Int = 16          // carrier frequency word: dataWidth (coarse, fs/2^16 grid) or 2·dataWidth
+    freqWidth: Int = 16,         // carrier frequency word: dataWidth (coarse, fs/2^16 grid) or 2·dataWidth
                                  // (fine, fs/2^32) — CarrierBatchGenerator / PhasorBatchGenerator
+    holdMaxDur: Boolean = false  // a pulse whose dur is all-ones (2^durWidth − 1) HOLDS until the next one
+                                 // pops instead of counting down: a continuous wave (the RF switch of a
+                                 // DDS — an AOM tone that stays on across kernels). The envelope address
+                                 // wraps, so a uniform envelope RAM gives a constant tone.
 ) {
   require(isPow2(batchSize), "batchSize must be a power of two")
   require(dataWidth >= 2 && timeWidth >= 3 && addrWidth >= 1 && durWidth >= 1)
@@ -147,7 +151,8 @@ case class PulseGenerator(p: PulseGeneratorParams) extends Component {
 
   // ── duration gate: down-counter loaded from the dur queue; valid window = [startTime, +dur) ──
   val cnt    = Reg(UInt(p.durWidth bits)) init (0)
-  when(durQ.io.pop.valid)(cnt := durQ.io.pop.payload).elsewhen(cnt =/= 0)(cnt := cnt - 1)
+  val holding = if (p.holdMaxDur) cnt.andR else False           // dur = all-ones: hold (see holdMaxDur)
+  when(durQ.io.pop.valid)(cnt := durQ.io.pop.payload).elsewhen(cnt =/= 0 && !holding)(cnt := cnt - 1)
   val active = cnt =/= 0
   // Buffer `active` (the cnt comparator output) in its own register rather than muxing io.pulse
   // straight off the live comparator: this keeps the high-fanout counter→compare path off the output

@@ -56,7 +56,8 @@ case class PulseDriveChannel(
   val pgParams = PulseGeneratorParams(
     batchSize = N, dataWidth = w, timeWidth = timeWidth, addrWidth = envAddrWidth, durWidth = durWidth,
     memLatency = memLatency, prescaleAmp = prescaleAmp, saturate = saturate, phasorMethod = phasorMethod,
-    realOutput = realOutput, queueDepth = queueDepth, freqWidth = freqWidth)
+    realOutput = realOutput, queueDepth = queueDepth, freqWidth = freqWidth,
+    holdMaxDur = freqWidth > dataWidth)   // fine (ion) channels: dur 0xFFFF = continuous (the RF switch)
 
   // The generator's raw pulse (pre-dcOffset), captured here so the dcOffset stage below is shared
   // across both generator variants.

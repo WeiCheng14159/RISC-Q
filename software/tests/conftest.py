@@ -165,6 +165,22 @@ def cosim_mm(request):
 
 
 @pytest.fixture(scope="session")
+def cosim_ion(request):
+    """A running verilator co-sim of the zcu216-ion build (the trapped-ion port): ONE core owning
+    eight fine-frequency (freq_bits 32) beam channels, a demod on ADC 0 and a TTL bank with gated
+    PMT counters on lines 8/9: (CosimDriver, SocMap)."""
+    if not request.config.getoption("--cosim"):
+        pytest.skip("needs --cosim")
+    from riscq.map import SocMap, SocParams
+    from riscq.sim import server
+
+    drv = server.start(CONFIGS / "zcu216-ion.json", SW_ROOT / "build" / "sim-ion")
+    m = SocMap(SocParams.from_json(drv.sim.get_params()))
+    yield drv, m
+    server.stop(drv)
+
+
+@pytest.fixture(scope="session")
 def cosim_dio(request):
     """A running verilator co-sim of the sim-dio build: core 0 carries a
     timed-DIO bank `ttl` next to gate / ro / demod: (CosimDriver, SocMap)."""

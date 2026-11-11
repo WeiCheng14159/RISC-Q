@@ -425,7 +425,8 @@ class _FrontEnd:
             line0 = alloc.add(lines, name=f"{tname}[{pname!r}]")
             slot_codes.append((pulse.phase_code(), pulse.amp_code(), line0, len(lines)))
         rt = _RTable(name=tname, table=table, cname=chinfo.cname, base=chinfo.base,
-                     count=len(table.pulses), carrier_code=table.freq_code(self.m),
+                     count=len(table.pulses),
+                     carrier_code=units.channel_freq_to_code(table.freq_hz, self.m.params, chinfo),
                      slot_codes=slot_codes)
         self._resolved[tname] = rt
         return rt
@@ -854,8 +855,8 @@ class _FrontEnd:
         if isinstance(v, ast.Name) and v.id in self.table_params:
             tname = v.id
             if node.attr == "freq":
-                # carrier_code is already the seated register word (units.freq_to_code), so
-                # set_freq(ch, ch.freq) emits it raw — and it loads in one `lui` (low 16 bits zero).
+                # carrier_code is already the register word (seated units.freq_to_code, or the whole
+                # 32-bit fine word on a freq_bits-32 channel), so set_freq(ch, ch.freq) emits it raw.
                 return ir.Const(self._resolve_table(node, tname).carrier_code), "int"
             if node.attr == "sink":
                 rt = self._resolve_table(node, tname)

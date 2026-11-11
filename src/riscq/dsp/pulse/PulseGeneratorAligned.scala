@@ -137,7 +137,8 @@ case class PulseGeneratorAligned(p: PulseGeneratorParams) extends Component {
   val durValid = validSr(dDur)
   val durData  = aligned(paramQ.io.pop.payload.dur, dDur)
   val cnt    = Reg(UInt(p.durWidth bits)) init (0)
-  when(durValid)(cnt := durData).elsewhen(cnt =/= 0)(cnt := cnt - 1)
+  val holding = if (p.holdMaxDur) cnt.andR else False           // dur = all-ones: hold (holdMaxDur)
+  when(durValid)(cnt := durData).elsewhen(cnt =/= 0 && !holding)(cnt := cnt - 1)
   val active = cnt =/= 0
   val activeReg = RegNext(active) init (False)
   io.pulse.valid := activeReg

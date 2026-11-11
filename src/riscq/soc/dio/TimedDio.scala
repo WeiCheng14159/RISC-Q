@@ -22,13 +22,33 @@ import riscq.soc.rf.{Channel, PulseParamBuffer, PulseParamBufferParams}
  * Inputs are sampled every cycle; any change posts an event `{changed lines, new levels}` stamped
  * with the batch time of the sample, into the core's `fifo` sink (consume-on-read, with a sequence
  * number) — "wait for exposure-out" and "when exactly did the shutter open" are one halting read.
+ *
+ * '''Board inputs''' pass a `syncStages`-flop synchronizer (ASYNC_REG) before sampling: a PMT or any
+ * external TTL is asynchronous to dspClk. The stages delay every input timestamp by `syncStages` batches
+ * (`TimedDio.inputDelay`), which software subtracts.
+ *
+ * '''Gated edge counters''' (`countMask`): an input line j in the mask is a photon counter, the ARTIQ
+ * `EdgeCounter` model. Its gate is OUTPUT bit j of the bank — scheduled like any TTL edge (`play` an entry
+ * setting bit j at the gate open, another clearing it at the close), so the gate lands at batch
+ * precision on the timeline. While the gate is high the counter counts rising edges of input j
+ * (saturating at 0xFFFF); on the gate's falling edge it posts ONE event `{changed = 1 << j, levels =
+ * count}` stamped with the close batch, and clears. A counted line posts no change events (a PMT would
+ * flood the fifo), so an event whose `changed` has a counted bit set IS that line's count. Change events
+ * win a same-cycle collision; a closed count waits (one pending count per line) and goes out on the next
+ * free cycle with its own close time.
+ *
+ * '''Loopback''' (the buffer's otherwise-unused `dcOffset` register, `set_dc_offset(ch, mask << 16)`):
+ * input j with mask bit j set reads OUTPUT line `j ^ 8` instead of its pin, after the synchronizer — a
+ * board self-test of the counters and input timestamps with nothing wired (out 0..7 → in 8..15).
  */
 case class TimedDio(
     slots: Int,
     timeWidth: Int = 32,
     durWidth: Int = 16,
     queueDepth: Int = 4,
-    putAddrWidth: Int = 16
+    putAddrWidth: Int = 16,
+    countMask: Int = 0,         // input lines that are gated edge counters (gate = the same output bit)
+    syncStages: Int = 2         // input synchronizer flops (board pins are asynchronous)
 ) extends Component with Channel {
   val lines = 16                      // the buffer's 16-bit mask/value fields
   val io = new Bundle {
@@ -66,13 +86,57 @@ case class TimedDio(
   }
   io.dout := outReg
 
-  // ── input edges → events with the sample's batch time ──
-  val inReg  = RegNext(io.din) init 0
+  // ── inputs: loopback mux → synchronizer → sample ──
+  // The loopback joins BEFORE the synchronizer, so a looped edge has exactly a wired pin's timing.
+  require(syncStages >= 0 && (countMask >> lines) == 0)
+  val loopMask = buf.io.dcOffset.asBits                                       // runtime: 0 = pins
+  val looped   = Bits(lines bits)                                             // in j ← out j^8
+  for (j <- 0 until lines) looped(j) := outReg(j ^ 8)
+  val pinOrLoop = (io.din & ~loopMask) | (looped & loopMask)
+  val synced = (0 until syncStages).foldLeft(pinOrLoop) { (d, i) =>
+    val r = RegNext(d) init 0
+    r.addAttribute("ASYNC_REG", "TRUE")
+    r.setName(s"inSync$i")
+    r
+  }
+  val inReg  = RegNext(synced) init 0
   val inPrev = RegNext(inReg) init 0
-  val changed = inReg ^ inPrev
-  io.event.valid   := changed =/= 0
-  io.event.payload := changed ## inReg
-  io.eventTime     := RegNext(buf.io.time)                   // the batch the changed sample was taken
+  val sampleTime = RegNext(buf.io.time)                                       // the batch inReg was taken
+  val cntBits = B(countMask, lines bits)
+  val changed = (inReg ^ inPrev) & ~cntBits                                   // counted lines post no edges
+
+  // ── gated edge counters (one per countMask line) ──
+  // An edge at pin/output time T rises in `rising` at cycle T + syncStages + 1; the gate bit is delayed by
+  // the same amount, so the window is EXACTLY [gate open, gate close) on the timeline (ARTIQ gate_rising).
+  val gateLag  = syncStages + 1
+  val rising   = inReg & ~inPrev
+  val gate     = Delay(outReg & cntBits, gateLag, init = B(0, lines bits))
+  val gatePrev = RegNext(gate) init 0
+  val closing  = gatePrev & ~gate                                             // gate fell (lagged) this cycle
+  val closeTime = buf.io.time - gateLag                                       // = the gate's timeline close
+  val counts   = Vec.fill(lines)(Reg(UInt(16 bits)) init 0)
+  val doneCnt  = Vec.fill(lines)(Reg(UInt(16 bits)) init 0)
+  val doneTime = Vec.fill(lines)(Reg(UInt(timeWidth bits)) init 0)
+  val pending  = Reg(Bits(lines bits)) init 0
+  val sendCnt  = Bool()
+  val sendSel  = UInt(log2Up(lines) bits)
+  for (j <- 0 until lines if ((countMask >> j) & 1) == 1) {
+    when(closing(j)) {
+      doneCnt(j)  := counts(j)                                                // the count up to the close
+      doneTime(j) := closeTime
+      counts(j)   := 0
+    }.elsewhen(gate(j) && rising(j) && counts(j) =/= 0xFFFF) {
+      counts(j) := counts(j) + 1
+    }
+  }
+  // the lowest pending count goes out on a cycle with no change event
+  sendSel := OHToUInt(OHMasking.first(pending))
+  sendCnt := pending.orR && changed === 0
+  pending := (pending & ~Mux(sendCnt, UIntToOh(sendSel, lines), B(0, lines bits))) | closing
+
+  io.event.valid   := changed =/= 0 || sendCnt
+  io.event.payload := Mux(changed =/= 0, changed ## inReg, UIntToOh(sendSel, lines) ## doneCnt(sendSel).asBits)
+  io.eventTime     := Mux(changed =/= 0, sampleTime, doneTime(sendSel))
   io.time          := buf.io.time
   override def event: Option[EventSource] = Some(EventSource(EventLink.fifoKind, io.event, Some(io.eventTime)))
 }
@@ -81,4 +145,7 @@ object TimedDio {
   /** The queue pops one cycle before the scheduled batch so the registered output changes ON it. */
   val leadTime = 1
   val eventDataWidth = 32                                    // {changed[15:0], levels[15:0]}
+  /** batches an input pin edge's event stamp trails the pre-synchronizer stamp: the synchronizer stages.
+    * (Counter windows are compensated in hardware — they need no correction.) */
+  def inputDelay(syncStages: Int = 2): Int = syncStages
 }

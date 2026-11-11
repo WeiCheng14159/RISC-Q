@@ -30,15 +30,22 @@ import riscq.dsp._
  * `freq` write regenerates it, which is safe because the pulse output is duration-gated to zero and every
  * consumer programs `freq` before its window — see the register declaration below. `regenCycles` (freq
  * fire → phasors valid) is exported so the toplevel's freq-queue lead time covers the regen window.
+ *
+ * '''Fine frequency''' (`freqWidth` > `dataWidth`): `f` and the accumulator `zAcc = k·f` run at
+ * `freqWidth` bits (still a truncating wrap = exact turn), and the computation block takes the TOP
+ * `dataWidth` bits of `zAcc` — so phasor[k] = Amax·exp(iπ·⌊k·f / 2^(fw−w)⌋ / 2^(w−1)): the lane phase
+ * is exact to one SF(w) LSB. `freqWidth = 0` (default) means `dataWidth` — bit-identical to before.
  */
 case class PhasorBatchGenerator(batchSize: Int, dataWidth: Int, correctGain: Boolean = true,
-    saturate: Boolean = true, method: SinCosMethod = SinCosMethod.Cordic) extends Component {
+    saturate: Boolean = true, method: SinCosMethod = SinCosMethod.Cordic, freqWidth: Int = 0) extends Component {
   val N    = batchSize
   val w    = dataWidth
+  val fw   = if (freqWidth == 0) dataWidth else freqWidth
+  require(fw >= w, s"freqWidth $fw < dataWidth $w")
   val amax = (BigInt(1) << (w - 1)) - 1
 
   val io = new Bundle {
-    val freq    = slave port Flow(SInt(w bits))
+    val freq    = slave port Flow(SInt(fw bits))
     val phasors = master port Flow(ComplexBatch(N, w))
   }
 
@@ -115,8 +122,8 @@ case class PhasorBatchGenerator(batchSize: Int, dataWidth: Int, correctGain: Boo
   // fReg/zAcc carry no reset init: both are write-before-read — loaded/cleared on a freq fire before any
   // command issues, and the reset-time default batch (issueCnt=N ⇒ not issuing) never reads
   // them — so dropping the inits is behaviour-identical and lightens the reset group.
-  val fReg       = Reg(SInt(w bits))
-  val zAcc       = Reg(SInt(w bits))                   // phase accumulator k·f (truncating wrap)
+  val fReg       = Reg(SInt(fw bits))
+  val zAcc       = Reg(SInt(fw bits))                  // phase accumulator k·f (truncating wrap)
   val issueCnt   = Reg(UInt(log2Up(N + 1) bits)) init (N)
   val collectCnt = Reg(UInt(log2Up(N + 1) bits)) init (N)
   val since      = Reg(UInt(log2Up(Lc + 1) bits)) init (0) // cycles since restart, saturating at Lc
@@ -126,7 +133,7 @@ case class PhasorBatchGenerator(batchSize: Int, dataWidth: Int, correctGain: Boo
   // issue N commands (phase = k·f) on consecutive cycles.
   val issuing = issueCnt < N
   cmdValid := issuing
-  cmdPhase := zAcc
+  cmdPhase := zAcc(fw - 1 downto fw - w)               // the top w bits (= zAcc when fw == w)
   when(issuing) {
     zAcc     := zAcc + fReg // exact phase wrap (truncating add)
     issueCnt := issueCnt + 1

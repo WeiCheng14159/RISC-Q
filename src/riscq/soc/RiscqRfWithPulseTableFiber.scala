@@ -185,9 +185,10 @@ case class RiscqRfWithPulseTableFiber(
           PulseDriveChannel(pulseNum = ch.slots, batchSize = batchSize, dataWidth = w,
             envAddrWidth = envAddrWidth, durWidth = durWidth, timeWidth = timeWidth, memLatency = memLatency,
             prescaleAmp = prescaleAmp, saturate = saturate, phasorMethod = phasorMethod, realOutput = true,
-            queueDepth = spec.queueDepth)
+            queueDepth = spec.queueDepth, freqWidth = ch.freqBits)
         case "dio" =>
-          TimedDio(slots = ch.slots, timeWidth = timeWidth, durWidth = durWidth, queueDepth = spec.queueDepth)
+          TimedDio(slots = ch.slots, timeWidth = timeWidth, durWidth = durWidth, queueDepth = spec.queueDepth,
+            countMask = ch.countMask, syncStages = ch.syncStages)
         case "demod" =>
           // the demod carrier: a scheduled, envelope-shaped complex pulse (a PulseDriveChannel pointed at
           // the decoder). Its posted RF sub-window carries the same fire/freq/table/startTime map as a

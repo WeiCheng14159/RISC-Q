@@ -31,9 +31,11 @@ case class PulseDriveChannel(
     realOutput: Boolean,
     queueDepth: Int = 4,          // per-parameter TimedQueue depth (scheduled-ahead pulses per param)
     putAddrWidth: Int = 16,
-    useAligned: Boolean = false   // false = per-parameter lead-time TimedQueues (PulseGenerator);
+    useAligned: Boolean = false,  // false = per-parameter lead-time TimedQueues (PulseGenerator);
                                   // true = QubiC-style single combined params FIFO + SRL alignment
                                   // (PulseGeneratorAligned). Bit-identical pulse; trades alignment HW.
+    freqWidth: Int = 16           // carrier frequency word: 16 (fs/2^16 grid) or 32 (fs/2^32, the
+                                  // whole freq data word) — the channel spec's `freq_bits`
 ) extends Component with Channel {
   val N = batchSize; val w = dataWidth
   val io = new Bundle {
@@ -47,14 +49,14 @@ case class PulseDriveChannel(
 
   val buf = PulseParamBuffer(PulseParamBufferParams(
     pulseNum = pulseNum, dataWidth = w, envAddrWidth = envAddrWidth, durWidth = durWidth,
-    timeWidth = timeWidth, addrWidth = putAddrWidth))
+    timeWidth = timeWidth, addrWidth = putAddrWidth, freqWidth = freqWidth))
   buf.io.cmd << io.cmd
   buf.io.timeBcast := io.timeBcast
 
   val pgParams = PulseGeneratorParams(
     batchSize = N, dataWidth = w, timeWidth = timeWidth, addrWidth = envAddrWidth, durWidth = durWidth,
     memLatency = memLatency, prescaleAmp = prescaleAmp, saturate = saturate, phasorMethod = phasorMethod,
-    realOutput = realOutput, queueDepth = queueDepth)
+    realOutput = realOutput, queueDepth = queueDepth, freqWidth = freqWidth)
 
   // The generator's raw pulse (pre-dcOffset), captured here so the dcOffset stage below is shared
   // across both generator variants.

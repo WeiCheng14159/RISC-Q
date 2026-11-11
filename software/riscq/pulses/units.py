@@ -67,6 +67,42 @@ def code_to_freq(code: int, params: SocParams) -> float:
     return code * sample_rate(params) / (1 << 16)
 
 
+FINE_BITS = 32
+_FINE_PERIOD = 1 << FINE_BITS
+
+
+def fine_freq_to_code(f_hz: float, params: SocParams) -> int:
+    """The carrier frequency word of a FINE channel (`freq_bits` 32): the per-sample phase advance in
+    units of 2^-32 turn, round(f_hz * 2^32 / fs), folded into signed int32 — the WHOLE register word
+    (no seating), written as `set_freq(ch, code)`. Grid fs/2^32 = 1.86 Hz at 8 GS/s. A tone at or past
+    the sample rate fails loud; above Nyquist it folds like the coarse code."""
+    fs = sample_rate(params)
+    code = round(f_hz * _FINE_PERIOD / fs)
+    if not -_FINE_PERIOD < code < _FINE_PERIOD:
+        raise ValueError(f"freq {f_hz} Hz -> fine code {code} exceeds one full turn (rate {fs:g} Hz)")
+    return ((code + (1 << 31)) & 0xFFFFFFFF) - (1 << 31)
+
+
+def fine_code_to_freq(code: int, params: SocParams) -> float:
+    """Hz from a fine (32-bit) carrier code: the tone a fine channel actually synthesizes."""
+    return code * sample_rate(params) / _FINE_PERIOD
+
+
+def channel_freq_to_code(f_hz: float, params: SocParams, channel) -> int:
+    """The set_freq word for `channel` (a ChannelInfo/ChannelSpec): fine or seated coarse by its
+    `freq_bits`."""
+    if getattr(channel, "freq_bits", 16) == FINE_BITS:
+        return fine_freq_to_code(f_hz, params)
+    return freq_to_code(f_hz, params)
+
+
+def channel_code_to_freq(word: int, params: SocParams, channel) -> float:
+    """The realized tone of a set_freq word on `channel` (inverse of channel_freq_to_code)."""
+    if getattr(channel, "freq_bits", 16) == FINE_BITS:
+        return fine_code_to_freq(word, params)
+    return code_to_freq(((word >> 16) + (1 << 15)) % (1 << 16) - (1 << 15), params)
+
+
 def _demod_code(f_hz: float, params: SocParams) -> int:
     """Plain demod-LO frequency code = per-ADC-SAMPLE phase advance in pi units, SF(16), DERIVED from
     the DAC code: BATCH_SIZE/ADC_BATCH (4x) _freq_code, folded mod 2^16 — exactly what the

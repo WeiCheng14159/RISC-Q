@@ -31,13 +31,16 @@ case class PulseGeneratorParams(
                                  // correction, 2 DSP, 8 pipeline stages, 1 BRAM — shorter regenCycles
                                  // (N+10 vs N+21/22) and fewer LUTs at the cost of 1 BRAM36 + 2 DSP48E2.
     ,
-    realOutput: Boolean = false  // when only the real pulse lane is consumed (e.g. a real DAC), drive
+    realOutput: Boolean = false, // when only the real pulse lane is consumed (e.g. a real DAC), drive
                                  // io.pulse.im = 0 so synthesis prunes each envelope ComplexMul's
                                  // imag-output multiply (3→2 DSP/lane) — even inside a KEEP_HIERARCHY
                                  // fence, since the dead output is then intra-block.
+    freqWidth: Int = 16          // carrier frequency word: dataWidth (coarse, fs/2^16 grid) or 2·dataWidth
+                                 // (fine, fs/2^32) — CarrierBatchGenerator / PhasorBatchGenerator
 ) {
   require(isPow2(batchSize), "batchSize must be a power of two")
   require(dataWidth >= 2 && timeWidth >= 3 && addrWidth >= 1 && durWidth >= 1)
+  require(freqWidth == dataWidth || freqWidth == 2 * dataWidth, s"freqWidth $freqWidth: dataWidth or 2·dataWidth")
 }
 
 /**
@@ -64,7 +67,7 @@ case class PulseGenerator(p: PulseGeneratorParams) extends Component {
     val time      = in port UInt(p.timeWidth bits)            // external SoC time, batch units
     val startTime = in port UInt(p.timeWidth bits)            // sampled at each param push
     val amp       = slave port Flow(SInt(w bits))
-    val freq      = slave port Flow(SInt(w bits))
+    val freq      = slave port Flow(SInt(p.freqWidth bits))
     val phase     = slave port Flow(SInt(w bits))
     val addr      = slave port Flow(UInt(p.addrWidth bits))
     val dur       = slave port Flow(UInt(p.durWidth bits))    // batches; pulse window length
@@ -76,8 +79,8 @@ case class PulseGenerator(p: PulseGeneratorParams) extends Component {
   // prescaleAmp ⇒ run both CORDICs uncorrected (software prescales amp by 1/K): the gain
   // stage drops, cordic.latency shrinks by 1, and the lead times below re-derive automatically.
   val correctGain = !p.prescaleAmp
-  val phasorGen = PhasorBatchGenerator(N, w, correctGain, p.saturate, p.phasorMethod)
-  val carrierGen = CarrierBatchGenerator(N, w, p.timeWidth, correctGain, p.saturate)
+  val phasorGen = PhasorBatchGenerator(N, w, correctGain, p.saturate, p.phasorMethod, p.freqWidth)
+  val carrierGen = CarrierBatchGenerator(N, w, p.timeWidth, correctGain, p.saturate, p.freqWidth)
   val envReader = EnvelopeReader(EnvelopeReaderParams(N, w, p.addrWidth, p.memLatency))
   // resetValid = false: the envMul rsp.valid is unused — the output is gated by the
   // reset-bearing duration counter `active`, so the reset-free valid chain sheds the global reset.
@@ -104,8 +107,8 @@ case class PulseGenerator(p: PulseGeneratorParams) extends Component {
   }
   val ampQ   = mkQueue(SInt(w bits), leadAmp)
   val phaseQ = mkQueue(SInt(w bits), leadPhase)
-  val freqCQ = mkQueue(SInt(w bits), leadFreqC) // freq → carrier
-  val freqPQ = mkQueue(SInt(w bits), leadFreqP) // freq → phasor regen
+  val freqCQ = mkQueue(SInt(p.freqWidth bits), leadFreqC) // freq → carrier
+  val freqPQ = mkQueue(SInt(p.freqWidth bits), leadFreqP) // freq → phasor regen
   val addrQ  = mkQueue(UInt(p.addrWidth bits), leadAddr)
   val durQ   = mkQueue(UInt(p.durWidth bits), leadDur)
 

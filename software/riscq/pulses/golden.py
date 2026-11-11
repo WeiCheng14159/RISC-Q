@@ -13,6 +13,10 @@ Composition, for output batch at (channel) time T = t_start + i, lane k in [0,16
     carrier[k] = cmul(cBase, phasor[k])
     dac[k]     = Re(cmul(carrier[k], env[t_start-env_line0+i][k // interp]))
 
+A FINE channel (`freq_bits` 32, a 32-bit freq word = 2^-32 turn per sample) takes the TOP 16 bits of
+the 32-bit products instead: gPhase = wrap16(top16((freq * 16*tau) mod 2^32) + phase), phasor[k] at
+top16((k*freq) mod 2^32) — CarrierBatchGenerator / PhasorBatchGenerator, same TIME_TO_PULSE.
+
 All constants below are DERIVED from the same formulas as the RTL elaboration (no magic
 numbers); the cosim DAC-capture tests assert the whole composition bit-exactly against the
 hardware."""
@@ -104,14 +108,22 @@ def cmul(ar: int, ai: int, br: int, bi: int) -> tuple[int, int]:
     return wrap16((pr + half) >> (W - 1)), wrap16((pi + half) >> (W - 1))
 
 
+def top16(v: int, freq_bits: int) -> int:
+    """The SF(16) phase of a freq_bits-wide phase product: wrap16 on the coarse path, the top 16
+    bits of (v mod 2^freq_bits) on the fine one."""
+    if freq_bits == 16:
+        return wrap16(v)
+    return wrap16((v % (1 << freq_bits)) >> (freq_bits - 16))
+
+
 @lru_cache(maxsize=None)
-def phasors(freq_code: int) -> tuple[tuple[int, int], ...]:
-    """The 16 static per-lane phasors: cordic_rotate(PHASOR_MAG, 0, wrap16(k*freq))."""
-    return tuple(cordic_rotate(PHASOR_MAG, 0, wrap16(k * freq_code)) for k in range(16))
+def phasors(freq_code: int, freq_bits: int = 16) -> tuple[tuple[int, int], ...]:
+    """The 16 static per-lane phasors: cordic_rotate(PHASOR_MAG, 0, top16(k*freq))."""
+    return tuple(cordic_rotate(PHASOR_MAG, 0, top16(k * freq_code, freq_bits)) for k in range(16))
 
 
 def pulse_window(lines: np.ndarray, amp_code: int, freq_code: int, phase_code: int,
-                 t_start: int, dur: int) -> np.ndarray:
+                 t_start: int, dur: int, freq_bits: int = 16) -> np.ndarray:
     """The bit-exact DAC window [t_start, t_start+dur): shape (dur, 16) int16 real lanes.
 
     `lines` is the PACKED envelope RAM content the pulse plays, shape (n_lines, spl) uint32
@@ -129,11 +141,12 @@ def pulse_window(lines: np.ndarray, amp_code: int, freq_code: int, phase_code: i
     env_re = np.where(env_re >= 0x8000, env_re.astype(np.int64) - 0x10000, env_re).astype(np.int64)
     env_im = np.where(env_im >= 0x8000, env_im.astype(np.int64) - 0x10000, env_im).astype(np.int64)
 
-    ph = phasors(freq_code)
+    ph = phasors(freq_code, freq_bits)
     out = np.zeros((dur, 16), dtype=np.int16)
     for i in range(dur):
         tau = t_start + i - TIME_TO_PULSE
-        g_phase = wrap16(wrap16(freq_code * wrap16((tau * 16))) + phase_code)
+        bt = wrap16(tau * 16) if freq_bits == 16 else (tau * 16) % (1 << freq_bits)
+        g_phase = wrap16(top16(freq_code * bt, freq_bits) + phase_code)
         cr, ci = cordic_rotate(amp_code, 0, g_phase)
         for k in range(16):
             car = cmul(cr, ci, *ph[k])

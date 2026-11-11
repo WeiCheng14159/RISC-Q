@@ -19,7 +19,8 @@ case class PulseTableTerm(dataWidth: Int, envWidth: Int, durWidth: Int) extends 
  * control software writes, with `startTime` folded in per-buffer:
  *
  *   - `fire`@0x0        — write the table index `outId` ⇒ enqueue that entry at the current `startTime`
- *   - `freq`@0x4        — shared carrier frequency (16-bit field at bit 16)
+ *   - `freq`@0x4        — shared carrier frequency (16-bit field at bit 16; with `freqWidth` 32 the
+ *                         whole 32-bit data word — the fine-frequency build, see CarrierBatchGenerator)
  *   - `dcOffset`@0x8    — DC bias added to the real output lanes downstream (16-bit field at bit 16)
  *   - `phaseOffset`@0xC — virtual-Z phase added to the generator's phase input downstream (16-bit field at bit 16)
  *   - `table[i]`        — entry `i` at `(i+1)*0x10`: `+0` phase, `+4` amp, `+8` env, `+12` dur
@@ -39,11 +40,13 @@ case class PulseParamBufferParams(
     startTimeAddr: Int = 0x4100,
     pulseOffset: Int = 0x10,     // 4 words per table entry; entry i at (i+1)*pulseOffset
     bitOffset: Int = 16,         // 16-bit fields packed in data[31:16]
+    freqWidth: Int = 16,         // carrier frequency word: 16 (data[31:16]) or 32 (the whole data word)
     useMem: Boolean = true       // table storage: true (default) = distributed-RAM Mem; false = FF Vec
                                  // register file. Clamped to a register file when pulseNum = 1 (a depth-1
                                  // table has no address, e.g. ro/demod) — see `memTable` in the body.
 ) {
   require(pulseNum >= 1)
+  require(freqWidth == dataWidth || freqWidth == 32, s"freqWidth $freqWidth: $dataWidth (seated field) or 32 (whole word)")
   require(addrWidth >= log2Up(startTimeAddr + 1), "addrWidth too small for startTimeAddr")
   // the parallel cmd decode splits the address at the 16-byte slot boundary (slot = address >> 4,
   // field = address[3:2]), so the layout must respect it:
@@ -75,7 +78,7 @@ case class PulseParamBuffer(p: PulseParamBufferParams) extends Component {
     val amp       = master port Flow(SInt(w bits))
     val addr      = master port Flow(UInt(envAddrWidth bits))
     val dur       = master port Flow(UInt(durWidth bits))
-    val freq      = master port Flow(SInt(w bits))
+    val freq      = master port Flow(SInt(freqWidth bits))
     val time      = out    port UInt(timeWidth bits)     // local copy → pg.io.time
     val startTime = out    port UInt(timeWidth bits)     // per-buffer, cmd-written → pg.io.startTime
     val dcOffset  = out    port SInt(w bits)             // per-buffer, cmd-written → real-lane DC bias
@@ -194,7 +197,7 @@ case class PulseParamBuffer(p: PulseParamBufferParams) extends Component {
   // timing-invisible (the timed queue still captures the same startTime ⇒ bit-exact). valid inits False —
   // reset-clean, no X-driven spurious freq push at t=0 (mirrors outParamFlow above).
   io.freq.valid   := RegNext(hit(freqAddr)) init False
-  io.freq.payload := RegNext(field(w).asSInt)
+  io.freq.payload := RegNext((if (freqWidth == w) field(w) else cmd.payload.data(0, freqWidth bits)).asSInt)
 
   // fire the popped table entry into the generator's queues.
   io.phase.valid := outParamFlow.valid; io.phase.payload := outParamFlow.phase.asSInt

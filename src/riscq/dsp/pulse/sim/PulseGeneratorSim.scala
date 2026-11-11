@@ -22,6 +22,11 @@ import scala.collection.mutable
  * lead time, simultaneously validates all six lead times); the payload is zeroed outside the window;
  * and back-to-back pulses + a phase-only (virtual-Z) update each land correctly. Run with
  * `mill runMain riscq.dsp.pulse.sim.PulseGeneratorSim`.
+ *
+ * `RISCQ_FREQ_WIDTH=32` runs the FINE-frequency generator (freqWidth 32, timeWidth 32): freq is a 32-bit
+ * per-sample phase advance, the golden takes the top w bits of `(freq·(τ·N)) mod 2^32` and of
+ * `(k·freq) mod 2^32`, and time runs from a large offset `T0` so the high halves of the time product
+ * (the Fh·Bl / Fl·Bh DSP terms) are exercised.
  */
 object PulseGeneratorSim extends App {
 
@@ -34,7 +39,11 @@ object PulseGeneratorSim extends App {
     case "Shadow"    => TimedQueueImpl.Shadow
     case "SrlShadow" => TimedQueueImpl.SrlShadow
   }
-  val basep = PulseGeneratorParams(batchSize = 4, dataWidth = 16, timeWidth = 16,
+  val freqW = sys.env.getOrElse("RISCQ_FREQ_WIDTH", "16").toInt
+  val fine  = freqW > 16
+  val T0    = if (fine) BigInt(0x12345600L) else BigInt(0)   // time origin (fine: high time bits set)
+  val basep = PulseGeneratorParams(batchSize = 4, dataWidth = 16, timeWidth = if (fine) 32 else 16,
+    freqWidth = freqW,
     addrWidth = 6, durWidth = 8, queueDepth = 4, memLatency = 2,
     queueUseVec = envB("RISCQ_QUEUE_USEVEC", false), queueForFMax = envB("RISCQ_QUEUE_FORFMAX", false),
     queueImpl = queueImpl)
@@ -61,7 +70,8 @@ object PulseGeneratorSim extends App {
     val io = new Bundle {
       val time      = in port UInt(p.timeWidth bits)
       val startTime = in port UInt(p.timeWidth bits)
-      val amp, freq, phase = slave port Flow(SInt(w bits))
+      val amp, phase = slave port Flow(SInt(w bits))
+      val freq      = slave port Flow(SInt(p.freqWidth bits))
       val addr      = slave port Flow(UInt(p.addrWidth bits))
       val dur       = slave port Flow(UInt(p.durWidth bits))
       val pulse     = master port Flow(ComplexBatch(N, w))
@@ -77,10 +87,13 @@ object PulseGeneratorSim extends App {
 
   // golden carrier / pulse (bit-exact composition of the per-block models). gPhase/env are
   // config-independent; phasor/carrier/goldenPulse depend on the gain mode and live inside run().
+  val maskF = BigInt(1) << freqW
+  /** the top w bits of a freqW-bit phase (= the value itself on the coarse path) */
+  def topW(x: BigInt): BigInt = signedW(uMod(x, maskF) >> (freqW - w))
   def gPhase(freq: BigInt, phase: BigInt, tau: BigInt): BigInt = {
-    val bt    = signedW((tau * N) & (maskW - 1))
-    val tpLow = signedW(uMod(freq * bt, maskW))
-    signedW(uMod(tpLow + phase, maskW))
+    val bt    = uMod(tau * N, maskF)
+    val tpTop = topW(freq * bt)
+    signedW(uMod(tpTop + phase, maskW))
   }
   def env(addr: Int, k: Int): (BigInt, BigInt) =
     (signedW(reK(addr & (nA - 1), k)), signedW(imK(addr & (nA - 1), k)))
@@ -116,7 +129,7 @@ object PulseGeneratorSim extends App {
     }
 
     def phasor(freq: BigInt, k: Int): (BigInt, BigInt) =
-      crot(phasorMag, signedW((BigInt(k) * freq) & (maskW - 1)))
+      crot(phasorMag, topW(BigInt(k) * freq))
     def carrier(amp: BigInt, freq: BigInt, phase: BigInt, tau: BigInt, k: Int): (BigInt, BigInt) = {
       val (cr, ci) = crot(amp, gPhase(freq, phase, tau))
       val (pr, pi) = phasor(freq, k)
@@ -148,8 +161,10 @@ object PulseGeneratorSim extends App {
         pushes.getOrElseUpdate(cycle, mutable.ArrayBuffer()).append((port, value, st))
 
       // pulse A (full param set), pulse B back-to-back, pulse C phase-only (virtual-Z) reusing A's amp/freq.
-      val pA = Pulse(startTime = 90, amp = 10000, freq = 2000, phase = 3000, base = 10, dur = 6)
-      val pB = Pulse(startTime = 150, amp = 7000, freq = -1500, phase = 1000, base = 20, dur = 5)
+      // fine: the same coarse tones plus non-zero low freq bits (the fs/2^32 grid the fine path adds)
+      val (fA, fB) = if (fine) (BigInt(2000) * 65536 + 12345, BigInt(-1500) * 65536 - 777) else (BigInt(2000), BigInt(-1500))
+      val pA = Pulse(startTime = 90, amp = 10000, freq = fA, phase = 3000, base = 10, dur = 6)
+      val pB = Pulse(startTime = 150, amp = 7000, freq = fB, phase = 1000, base = 20, dur = 5)
       // C is phase-only (virtual-Z): it pushes no amp/freq, so the held parameters are B's.
       val pC = Pulse(startTime = 210, amp = pB.amp, freq = pB.freq, phase = -8000, base = 30, dur = 4)
       // push full sets for A and B well before their starts; C pushes only phase/addr/dur (phase-only).
@@ -165,12 +180,12 @@ object PulseGeneratorSim extends App {
       schedule(cC, "dur", BigInt(pC.dur), pC.startTime)
 
       for (c <- 0 until totalCycles) {
-        dut.io.time #= c
+        dut.io.time #= T0 + c
         // default all pushes off, then apply scheduled ones for this cycle.
         dut.io.amp.valid #= false; dut.io.freq.valid #= false; dut.io.phase.valid #= false
         dut.io.addr.valid #= false; dut.io.dur.valid #= false
         pushes.get(c).foreach(_.foreach { case (port, value, st) =>
-          dut.io.startTime #= st
+          dut.io.startTime #= T0 + st
           port match {
             case "amp"   => dut.io.amp.valid #= true; dut.io.amp.payload #= value
             case "freq"  => dut.io.freq.valid #= true; dut.io.freq.payload #= value
@@ -199,7 +214,7 @@ object PulseGeneratorSim extends App {
         assert(c0 == pu.startTime, s"[$label] window starts at io.time=$c0, expected startTime=${pu.startTime}")
         // bit-exact value over the window: τ = (startTime+i) − timeToPulse, addr = base+i.
         for (i <- 0 until pu.dur; k <- 0 until N) {
-          val tau = BigInt(pu.startTime + i - timeToPulse)
+          val tau = T0 + BigInt(pu.startTime + i - timeToPulse)
           val (gre, gimFull) = goldenPulse(pu.amp, pu.freq, pu.phase, pu.base, i, tau, k)
           // realOutput drops the (unused) imag lane to 0; the REAL lane must stay bit-exact (same golden).
           val gim = if (realOutput) BigInt(0) else gimFull
@@ -220,7 +235,7 @@ object PulseGeneratorSim extends App {
 
       simSuccess()
     }
-    println(s"[PulseGeneratorSim] PASS  N=$N w=$w prescaleAmp=$prescaleAmp saturate=$saturate " +
+    println(s"[PulseGeneratorSim] PASS  N=$N w=$w freqWidth=$freqW prescaleAmp=$prescaleAmp saturate=$saturate " +
       s"realOutput=$realOutput: 3 pulses " +
       s"(full / back-to-back / phase-only) — valid window exactly [startTime,+dur), bit-exact composed " +
       s"golden${if (!saturate) " + no-overflow (clamp==wrap)" else ""}, zeroed between pulses.")

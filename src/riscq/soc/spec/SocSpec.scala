@@ -21,13 +21,20 @@ case class ChannelSpec(
     interp: Int,
     dac: Option[Int],
     adc: Option[Int],
-    trace: Boolean           // this channel's fires trigger the shared readout trace (robs)
+    trace: Boolean,          // this channel's fires trigger the shared readout trace (robs)
+    freqBits: Int = 16,      // carrier frequency word: 16 (fs/2^16 grid) or 32 (fs/2^32 — fine, pulse only)
+    countMask: Int = 0,      // dio: input lines that are gated edge counters (TimedDio)
+    syncStages: Int = 2      // dio: input synchronizer flops
 ) {
   require(SocSpec.kindLanes.contains(kind), s"channel '$name': unknown kind '$kind'")
   require(lanes % interp == 0, s"channel '$name': interp $interp must divide $lanes lanes")
   require((kind == "pulse") == dac.isDefined && (kind == "demod") == adc.isDefined,
     s"channel '$name': a pulse channel names a dac, a demod channel an adc, a dio channel neither")
   require((envDepth == 0) == (kind == "dio"), s"channel '$name': env_depth is 0 exactly for a dio channel")
+  require(freqBits == 16 || (freqBits == 32 && kind == "pulse"),
+    s"channel '$name': freq_bits $freqBits — 16, or 32 on a pulse channel")
+  require(countMask == 0 || kind == "dio", s"channel '$name': count_mask is a dio field")
+  require(countMask >= 0 && countMask <= 0xFFFF && syncStages >= 0)
   def lanes: Int = SocSpec.kindLanes(kind)
   def envWidth: Int = lanes * 2 * SocSpec.dataWidth / interp   // bits per stored (interpolated) line
   def samplesPerLine: Int = lanes / interp
@@ -165,7 +172,8 @@ object SocSpec {
         channels = c("channels").arr.map { chv =>
           val ch = chv.obj
           ChannelSpec(ch("name").str, ch("kind").str, ch("slots").num.toInt, ch("env_depth").num.toInt,
-            ch("interp").num.toInt, optInt(ch, "dac"), optInt(ch, "adc"), boolOr(ch, "trace", false))
+            ch("interp").num.toInt, optInt(ch, "dac"), optInt(ch, "adc"), boolOr(ch, "trace", false),
+            intOr(ch, "freq_bits", 16), intOr(ch, "count_mask", 0), intOr(ch, "sync_stages", 2))
         }.toSeq)
     }.toSeq
     SocSpec(o("name").str, o("dsp_freq_hz").num, intOr(o, "dac_num", 16), intOr(o, "adc_num", 16),
@@ -298,7 +306,8 @@ object PrintSocMap extends App {
     "channels" -> ujson.Arr(spec.cores.map { c => ujson.Arr(c.channels.zipWithIndex.map { case (ch, j) =>
       ujson.Obj("index" -> j, "name" -> ch.name, "kind" -> ch.kind, "base" -> m.channelBase(j),
         "slots" -> ch.slots, "samples_per_line" -> ch.samplesPerLine, "line_bytes" -> ch.lineBytes,
-        "dac" -> optNum(ch.dac), "adc" -> optNum(ch.adc)) }: _*) }: _*),
+        "dac" -> optNum(ch.dac), "adc" -> optNum(ch.adc), "freq_bits" -> ch.freqBits,
+        "count_mask" -> ch.countMask, "sync_stages" -> ch.syncStages) }: _*) }: _*),
     "put_addr_width" -> ujson.Arr(spec.cores.indices.map(i => ujson.Num(m.putAddrWidth(i))): _*),
     "dac_pipe" -> m.dacPipe)
   println(ujson.write(out))

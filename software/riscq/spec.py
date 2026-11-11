@@ -43,7 +43,10 @@ class ChannelSpec:
     """One channel of a core. `slots` = pulse-table depth, `env_depth` = envelope-RAM lines,
     `interp` = envelope interpolation (stored samples per line = lanes // interp). A `pulse`
     channel names its physical `dac`, a `demod` channel its `adc`. `trace` marks the channel whose
-    fires trigger the shared readout trace (`robs`) — the readout drive on the qubit builds."""
+    fires trigger the shared readout trace (`robs`) — the readout drive on the qubit builds.
+    `freq_bits` (pulse) is the carrier frequency word: 16 (fs/2^16 grid) or 32 (fs/2^32, the fine
+    build). `count_mask` (dio) marks the input lines that are gated edge counters, `sync_stages` (dio)
+    the input synchronizer depth (TimedDio)."""
 
     name: str
     kind: str
@@ -53,6 +56,9 @@ class ChannelSpec:
     dac: int | None = None
     adc: int | None = None
     trace: bool = False
+    freq_bits: int = 16
+    count_mask: int = 0
+    sync_stages: int = 2
 
     def __post_init__(self):
         if self.kind not in KIND_LANES:
@@ -69,6 +75,12 @@ class ChannelSpec:
             raise ValueError(f"channel {self.name!r}: slots must be >= 1")
         if (self.env_depth == 0) != (self.kind == "dio"):
             raise ValueError(f"channel {self.name!r}: env_depth is 0 exactly for a dio channel")
+        if not (self.freq_bits == 16 or (self.freq_bits == 32 and self.kind == "pulse")):
+            raise ValueError(f"channel {self.name!r}: freq_bits {self.freq_bits} — 16, or 32 on a pulse channel")
+        if self.count_mask and self.kind != "dio":
+            raise ValueError(f"channel {self.name!r}: count_mask is a dio field")
+        if not (0 <= self.count_mask <= 0xFFFF and self.sync_stages >= 0):
+            raise ValueError(f"channel {self.name!r}: count_mask 16-bit, sync_stages >= 0")
 
     @property
     def lanes(self) -> int:
@@ -247,6 +259,12 @@ class SocSpec:
                 d["adc"] = ch.adc
             if ch.trace:
                 d["trace"] = True
+            if ch.freq_bits != 16:
+                d["freq_bits"] = ch.freq_bits
+            if ch.count_mask:
+                d["count_mask"] = ch.count_mask
+            if ch.sync_stages != 2:
+                d["sync_stages"] = ch.sync_stages
             return d
         out = {"name": self.name, "dsp_freq_hz": self.dsp_freq_hz, "dac_num": self.dac_num,
                "adc_num": self.adc_num, "link_pipe": self.link_pipe,

@@ -101,6 +101,9 @@ class ChannelInfo:
     lanes: int = BATCH_SIZE
     dac: int | None = None
     adc: int | None = None
+    freq_bits: int = 16
+    count_mask: int = 0
+    sync_stages: int = 2
 
 
 class SocMap:
@@ -326,7 +329,8 @@ class SocMap:
         return [ChannelInfo(i, f"RF_CH{i}", self.PUT_WINDOW + i * self.RF_CH_STRIDE, ch.slots,
                             ch.samples_per_line, ch.line_bytes, core=core, name=ch.name,
                             kind=ch.kind, env_depth=ch.env_depth, lanes=ch.lanes,
-                            dac=ch.dac, adc=ch.adc)
+                            dac=ch.dac, adc=ch.adc, freq_bits=ch.freq_bits,
+                            count_mask=ch.count_mask, sync_stages=ch.sync_stages)
                 for i, ch in enumerate(cs.channels)]
 
     def channel(self, index: int, core: int = 0) -> ChannelInfo:

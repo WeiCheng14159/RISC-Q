@@ -172,6 +172,8 @@ def from_riscq(log: np.ndarray) -> Timeline:
 
 
 def _state_eq(sa, sb):
+    if not isinstance(sa, tuple) or not isinstance(sb, tuple):   # TTL levels, unsupported-call counts
+        return sa == sb
     if sa[0] != sb[0]:
         return False
     if sa[0] == 0:
@@ -197,7 +199,8 @@ def compare(ref: dict, riscq_log, riscq_pmt=None, max_segments: int | None = Non
                 continue
             for (ta, sa), (tr, sr) in zip(pa, pr):
                 n_pts += 1
-                if sa[0] and sr[0] and sa[1] is not None and sr[1] is not None:
+                if isinstance(sa, tuple) and isinstance(sr, tuple) and sa[0] and sr[0] \
+                        and sa[1] is not None and sr[1] is not None:
                     worst_df = max(worst_df, abs(sa[1] - sr[1]))
                 if ta != tr or not _state_eq(sa, sr):
                     mism.append({"seg": s, "dev": d, "artiq": (ta, sa), "riscq": (tr, sr)})

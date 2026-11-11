@@ -200,6 +200,8 @@ class Experiment:
         npts = len(self.span()) if npts is None else npts
         reps = self.reptime if reps is None else reps
         emu = list(emu_counts or [])
+        window_words = (1 << m.params.hostwin_bits) // 4             # the core's host window
+        log_words = min(log_words, window_words - max(1, npts * reps))
         prog, P, span = self.program(m, npts, reps, len(emu), log_words)
         out = rq.run(drv, m, {0: prog}, arrays={0: {"P": list(P.values()), "span": span or [0],
                                                       "emu": emu or [0]}},

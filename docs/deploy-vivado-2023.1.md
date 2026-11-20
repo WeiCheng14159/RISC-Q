@@ -328,9 +328,11 @@ this build uses `RISCQ_ROWCOUNTS=3,3,3,3,4`. Unset, the layout is unchanged.
 TimingClosure passes (the 14q-lp6 ladder). `dspClk` 500 MHz WNS −0.081 → −0.081 → **−0.059 ns** (1,134
 failing endpoints, TNS −25 ns), WHS +0.005 ns; `clk_pl_0` +2.470 ns. The misses are spread thinly over
 all 16 cores (11–178 endpoints each, worst −0.04 to −0.06 ns), mostly core-internal and core-boundary
-paths, a little heavier in the 4-core row. The bitstream is written from the second incremental pass.
-It is accepted as is for bench use; the slack is a worst-case-corner figure, but timing is not
-guaranteed. It has not been run on the board yet.
+paths, a little heavier in the 4-core row. The bitstream is the **implementation pass's (WNS −0.081 ns)**:
+the second incremental pass's result fails `write_bitstream` DRC UTLZ-1, because its post-route
+replication grew core 15 to 316 slices in a 315-slice band of the 4-core row. It is accepted as is for
+bench use; the slack is a worst-case-corner figure, but timing is not guaranteed. It has not been run
+on the board yet.
 
 ### zcu216-0 14-qubit native build (2026-11-09, `zcu216-14q-lp6`)
 

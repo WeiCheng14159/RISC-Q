@@ -1,0 +1,78 @@
+{
+    "name": "zcu216-full",
+    "dsp_freq_hz": 500000000.0,
+    "dac_num": 16,
+    "adc_num": 16,
+    "link_pipe": 6,
+    "hostwin_bits": 22,
+    "rob_depth": 1024,
+    "adc_pipe": 5,
+    "core_defaults": {"mem_depth": 4096, "with_mul": true, "queue_depth": 4},
+    "cores": [
+        {"name": "q0", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 0, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "ro", "kind": "pulse", "dac": 0, "slots": 1, "env_depth": 1024, "interp": 16, "trace": true},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q1", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 1, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q2", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 2, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q3", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 3, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q4", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 4, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q5", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 5, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q6", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 6, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q7", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 7, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q8", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 8, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q9", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 9, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q10", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 10, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q11", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 11, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q12", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 12, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q13", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 13, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q14", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 14, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]},
+        {"name": "q15", "role": "qubit", "channels": [
+            {"name": "gate", "kind": "pulse", "dac": 15, "slots": 8, "env_depth": 1024, "interp": 4},
+            {"name": "demod", "kind": "demod", "adc": 0, "slots": 1, "env_depth": 1024, "interp": 4}
+        ]}
+    ]
+}

@@ -115,7 +115,9 @@ impl only), `RISCQ_PLACE_DIRECTIVE` (`ExtraNetDelay_high`).
 Read by `inc/run.tcl`: `RISCQ_PHYSOPT_DIRECTIVE` (both phys_opt passes, e.g. `AggressiveExplore`),
 `RISCQ_CSET_THRESH` (control-set threshold on the SoC's IP synth run; default off).
 
-Read by `pblocks-bd.tcl`: `RISCQ_ROW` (3), `RISCQ_PERROW` (3), `RISCQ_CONFINE`
+Read by `pblocks-bd.tcl`: `RISCQ_ROW` (3), `RISCQ_PERROW` (3), `RISCQ_ROWCOUNTS` (cores per X0 row,
+bottom up, overriding `RISCQ_PERROW`: X0 has SLICEs only in Y3..Y7, so 3/row caps at 15 cores and the
+16-core `zcu216-full` build uses `3,3,3,3,4`), `RISCQ_CONFINE`
 (`global`|`region`|`none`, default `global`), `RISCQ_BD_BASE` (`riscq_bd_i/top/inst`), `RISCQ_MREG_LOCK`
 (`1` = `DONT_TOUCH` the carrierGen `ComplexMul` product DSPs so post-route phys_opt cannot strip their
 MREG; default off).

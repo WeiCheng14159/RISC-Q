@@ -16,7 +16,8 @@
 # a bare `NAME !~ *_riscvSoc/*`). Needs the per-core `KEEP_HIERARCHY` (PulseTableSoc tags it) so the
 # `_riscvSoc/` boundary survives opt_design.
 #
-# Env: RISCQ_ROW (3), RISCQ_PERROW (3), RISCQ_CONFINE (global|region|none, global),
+# Env: RISCQ_ROW (3), RISCQ_PERROW (3), RISCQ_ROWCOUNTS (per-row counts, e.g. 3,3,3,3,4 — overrides
+#      RISCQ_PERROW), RISCQ_CONFINE (global|region|none, global),
 #      RISCQ_BD_BASE (riscq_bd_i/top/inst — the IP instance path), RISCQ_MREG_LOCK (off — fix #2 below).
 # ============================================================================================
 
@@ -104,11 +105,29 @@ if {$confine == 2} {
   puts "\[riscvsoc-bd\] datapath confined globally → X1Y0:X5Y7 ([llength $dpCells] cells)"
 }
 
+# ── per-row core counts: RISCQ_ROWCOUNTS ("3,3,3,3,4") overrides the uniform perRow split. The X0
+# column has SLICEs only in Y3..Y7 on the ZU49DR (Y0..Y2 are the PS), so 3/row caps at 15 cores; a
+# 16-core build puts 4 bands in one row and keeps the others at the proven 3. ──
+if {[info exists ::env(RISCQ_ROWCOUNTS)] && $::env(RISCQ_ROWCOUNTS) ne ""} {
+  set rowCounts [split $::env(RISCQ_ROWCOUNTS) ","]
+} else {
+  set rowCounts [lrepeat [expr {($n + $perRow - 1) / $perRow}] $perRow]
+}
+if {[tcl::mathop::+ {*}$rowCounts] < $n} {
+  error "riscvsoc-bd: RISCQ_ROWCOUNTS {$rowCounts} places fewer than the $n cores found"
+}
+set slots {}
+set r 0
+foreach c $rowCounts {
+  for {set b 0} {$b < $c} {incr b} { lappend slots [list $r $b $c] }
+  incr r
+}
+puts "\[riscvsoc-bd\] core rows from Y$baseRow: {$rowCounts}"
+
 # ── pin every RiscvSoc core into its X0 band; pull its coreTime replica in with it ──
 set idx 0
 foreach i $ids {
-  set rowIdx  [expr {$idx / $perRow}]
-  set bandIdx [expr {$idx % $perRow}]
+  lassign [lindex $slots $idx] rowIdx bandIdx rowN
   set rr      [expr {$baseRow + $rowIdx}]
   # The core's I/D memory is one URAM (RiscvSoc `useUram=true`, the `mem` cell). The X0 clock-region
   # rows carry NO URAM column, so a URAM cell cannot live in the core's X0 SLICE band. The site-float
@@ -123,9 +142,9 @@ foreach i $ids {
   # `coreTime_i_regNext_reg[*]` (which belongs to the confined datapath).
   set tcells [get_cells -quiet -hierarchical -filter "NAME =~ ${base}/*coreTime_${i}_reg\[*"]
   if {[llength $tcells] > 0} { set coreCells [concat $coreCells $tcells] }
-  set rect [riscq_slice_band X0Y${rr} $bandIdx $perRow]
+  set rect [riscq_slice_band X0Y${rr} $bandIdx $rowN]
   riscq_make_pblock_sites pb_core${i} $coreCells $rect
-  puts "\[riscvsoc-bd\] core $i → X0Y${rr} band $bandIdx/$perRow ([llength $coreCells] cells, $rect)"
+  puts "\[riscvsoc-bd\] core $i → X0Y${rr} band $bandIdx/$rowN ([llength $coreCells] cells, $rect)"
   incr idx
 }
 puts "\[riscvsoc-bd\] floorplan applied ($n cores, confine=$confineStr)."

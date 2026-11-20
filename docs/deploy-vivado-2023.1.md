@@ -224,6 +224,114 @@ unlocked, a 48-sample ring on every ADC channel), and `mts_dac()` raising "Align
 delay 31 required exceeds maximum (31)". Neither showed up under the 300 MHz SPEAR plan; see the
 bring-up results below. Recheck both under the native plan. Keep checking `info()["rf_status"]` before trusting data.
 
+### Running the `examples/` notebooks in the board's own Jupyter
+
+The hardware notebooks (`remote_pulse`, `host_window`, `readout_robs`, `iq_scatter`, `vna`) compile
+their `@kernel`s wherever they run, then talk to the board server over Pyro5. PYNQ's Jupyter kernel
+can't do the first part: it runs Python 3.8 (the kernel frontend needs ≥ 3.10, e.g.
+`inspect.get_annotations`), has no `riscq` or Pyro5 on its path, and the board has no RISC-V
+compiler. The fix leaves PYNQ's own Python alone and adds a second Jupyter kernel, `riscq`, which
+is the `kernelspec` the notebooks name:
+
+```bash
+# on the board, as xilinx (R = the synced repo)
+R=/home/xilinx/jupyter_notebooks/RISC-Q
+curl -LsSf https://astral.sh/uv/install.sh | sh                      # uv -> ~/.local/bin
+uv venv --python 3.12 ~/riscq-venv
+VIRTUAL_ENV=~/riscq-venv uv pip install -e $R/software ipykernel matplotlib
+
+# LLVM 19.1.7 from conda-forge: the llvm.org aarch64 tarball needs glibc 2.34, PYNQ 2.7 (Ubuntu 20.04) has 2.31
+curl -Ls https://micro.mamba.pm/api/micromamba/linux-aarch64/latest | tar -xj -C /tmp bin/micromamba
+/tmp/bin/micromamba create -y -r ~/mamba -p ~/riscv-llvm -c conda-forge clang=19.1.7 lld=19.1.7 llvm-tools=19.1.7
+L=~/riscv-llvm/bin
+printf '#!/bin/sh\nexec %s/clang --target=riscv64-unknown-elf -fuse-ld=lld "$@"\n' $L | sudo tee /usr/local/bin/riscv64-unknown-elf-clang
+printf '#!/bin/sh\nexec %s/llvm-objcopy "$@"\n' $L | sudo tee /usr/local/bin/riscv64-unknown-elf-objcopy
+printf '#!/bin/sh\nexec %s/llvm-nm "$@"\n' $L      | sudo tee /usr/local/bin/riscv64-unknown-elf-nm
+sudo chmod +x /usr/local/bin/riscv64-unknown-elf-{clang,objcopy,nm}
+
+# register the kernel with PYNQ's Jupyter (it runs as root, so give it the PATH explicitly)
+K=/usr/local/share/pynq-venv/share/jupyter/kernels/riscq
+sudo mkdir -p $K && sudo tee $K/kernel.json <<'EOF'
+{"argv": ["/home/xilinx/riscq-venv/bin/python", "-m", "ipykernel_launcher", "-f", "{connection_file}"],
+ "display_name": "Python 3.12 (riscq)", "language": "python",
+ "env": {"PATH": "/home/xilinx/riscq-venv/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"}}
+EOF
+```
+
+The notebooks default to `BOARD = 127.0.0.1`. From a PC, set `RISCQ_BOARD=<the board's address>` instead.
+Jupyter (root) creates `software/build/cc/` (the kernel compile cache); `chown -R xilinx` it before
+compiling as `xilinx` from a shell.
+
+**Bundle on zcu216-0: `zcu216-loopback`.** The bench has one loopback cable, DAC 0 (`vout00`) → ADC 0
+(`vin00`); DAC 14, `zcu216-2q`'s readout drive, is uncabled (a 1.2 µs `robs` capture of a DAC 14 tone
+shows only noise, a DAC 0 tone shows up 120 ns after the fire). `software/configs/zcu216-loopback.json`
+is `zcu216-2q` with both cores' readout drive on DAC 0 and both demods on ADC 0; it serves all five
+notebooks (`remote_pulse` and `host_window` also run on `zcu216-2q`).
+
+### zcu216-0 `examples/` notebooks in the board's Jupyter (2026-11-18, `zcu216-loopback`)
+
+Build: Vivado 2023.1, timing met first pass (`dspClk` 500 MHz WNS +0.020 ns, WHS +0.010 ns).
+Each notebook ran headless in the `riscq` kernel from `examples/` (`jupyter nbconvert --execute`),
+kernels compiled on the board.
+
+| Notebook | Measured |
+|---|---|
+| `remote_pulse` | 8 pulses × 400 ns at 80 MHz; spacing `[341, 332, 332, …]` batches (682 / 664 ns), identical to co-sim of `zcu216-2q`. The first run after a load shows 341 throughout (GShare predictor warm-up, above) |
+| `host_window` | window = RAM array (100–115), rewritten in place on rerun; 64 KB (4× core RAM) exact |
+| `readout_robs` | 2.76 GHz tone back at its 0.760 GHz alias, from 120 ns into the 800 ns window to its end, 41 dB above the pre-arrival noise |
+| `iq_scatter` | 10,000 shots at 2.75 GHz in 0.3 s; blob SNR 52 (centroid / 1σ) |
+| `vna` | 781 points × 1000 shots: per-shot sweep 21 s (781 reruns), on-core power sweep 2 s (1 rerun) |
+
+`vna`'s two implementations agree to a median 1.8 % of peak (max 6.9 %, normalized). The raw RMS / mean
+ratio is a smooth, repeatable function of frequency: 0.89–0.93 across 2–3.5 GHz and 6–7 GHz, 0.99–1.00
+across 0.5–1.5 and 4.5–6 GHz. Each kernel repeats itself to ≈ 1 % between runs, and co-sim with an ideal
+loopback gives 1.0000 ± 0.0003 at every frequency, so the logic is identical and the difference is
+analog: one 2 s burst of back-to-back shots versus 781 separate 2.7 ms bursts. Not yet explained.
+Two notebook fixes came out of this run: the on-core pre-square shift is now sized from the measured
+per-shot IQ (the fixed `sh = 10` overflowed int32 on this bench), and the on-core frequency
+accumulator is seeded with the rounded start so it plays exactly the per-shot sweep's codes (it was one
+code, 122 kHz, low at 563 of 781 points).
+
+All five were also run through the live Jupyter server (port 9090), the path a browser takes: a session
+per notebook on its `riscq` kernel, every cell executed over the kernel websocket, all cells passing.
+A notebook opened before its kernelspec changed keeps its old session; reload it, or Kernel → Change
+kernel → Python 3.12 (riscq).
+
+**The three X6Y3 calibration notebooks** (`calibration_x6y3`, `calibration_process_x6y3`,
+`calibration_x6y3_full`) drive 8 qubits and need the 8-core X6Y3 build. With a smaller build loaded they
+now stop at once with a `RuntimeError` naming the bundle to load, instead of queueing experiments on cores
+that don't exist. `software/configs/x6y3-zcu216.json` is `x6y3` (same channel map, memories, rates and
+interpolation, so `check_hardware` passes) with the 14q build's `link_pipe` 6 / `adc_pipe` 5; it has
+**not been built yet**. On zcu216-0 every fit would fail by design: there is no qubit chip, and the X6Y3
+readout DAC 8 is uncabled.
+
+### zcu216-0 16-DAC build (2026-11-19, `zcu216-full`)
+
+`software/configs/zcu216-full.json`, per-core form: 16 cores, every DAC driven, one ADC for debugging.
+
+| Core | Channels |
+|---|---|
+| 0 | `gate` (8 slots) + `ro` on DAC 0, `demod` on ADC 0 (`vin00`, the bench loopback) |
+| 1–15 | `gate` (8 slots) on DAC *i*, `demod` on ADC 0 |
+
+Cores 1–15 have no `ro` channel. The first attempt gave every core `gate` + `ro` on its DAC: logic-slice
+occupancy reached 98 % and the build failed timing everywhere (WNS −0.313 ns, about 20,000 failing
+endpoints). Dropping the 15 readout-drive generators (≈ 4,550 LUTs each) brings it to 40.6 % LUTs, 38.9 %
+FFs, 71 % CLBs. Removing the demods instead is not possible without an RTL change:
+`RiscqRfWithPulseTableFiber` requires exactly one demod channel per core.
+
+**Floorplan.** The X0 column has SLICEs only in Y3..Y7 on the ZU49DR (Y0..Y2 are the PS), so the default
+3 cores per row caps at 15. `pblocks-bd.tcl` now takes `RISCQ_ROWCOUNTS` (cores per row, bottom up);
+this build uses `RISCQ_ROWCOUNTS=3,3,3,3,4`. Unset, the layout is unchanged.
+
+**Timing (not closed).** Flow: `RISCQ_PHYSOPT_DIRECTIVE=AggressiveExplore`, then two incremental
+TimingClosure passes (the 14q-lp6 ladder). `dspClk` 500 MHz WNS −0.081 → −0.081 → **−0.059 ns** (1,134
+failing endpoints, TNS −25 ns), WHS +0.005 ns; `clk_pl_0` +2.470 ns. The misses are spread thinly over
+all 16 cores (11–178 endpoints each, worst −0.04 to −0.06 ns), mostly core-internal and core-boundary
+paths, a little heavier in the 4-core row. The bitstream is written from the second incremental pass.
+It is accepted as is for bench use; the slack is a worst-case-corner figure, but timing is not
+guaranteed. It has not been run on the board yet.
+
 ### zcu216-0 14-qubit native build (2026-11-09, `zcu216-14q-lp6`)
 
 **Timing.** 14 cores at 500 MHz on Vivado 2023.1, closed in four steps:
